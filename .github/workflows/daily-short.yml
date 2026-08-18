@@ -1,0 +1,75 @@
+name: Daily YouTube Short
+
+on:
+  schedule:
+    # 07:00 IST = 01:30 UTC (IST is UTC+5:30, no daylight saving)
+    - cron: "30 1 * * *"
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write   # needed to commit output/topic_history.json back to the repo
+
+jobs:
+  generate-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ollama-models-${{ vars.MODEL_NAME || 'llama3.2' }}
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > ollama.log 2>&1 &
+          # Give the server a moment to come up before pulling/using it.
+          for i in {1..10}; do curl -sf http://localhost:11434 && break || sleep 2; done
+
+      - name: Pull model
+        run: ollama pull ${{ vars.MODEL_NAME || 'llama3.2' }}
+
+      - name: Restore YouTube credentials
+        run: |
+          mkdir -p credentials
+          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_B64 }}" | base64 -d > credentials/client_secret.json
+          echo "${{ secrets.YOUTUBE_TOKEN_B64 }}" | base64 -d > credentials/token.json
+
+      - name: Run pipeline
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          MODEL_NAME: ${{ vars.MODEL_NAME || 'llama3.2' }}
+        run: python main.py
+
+      - name: Persist topic history
+        run: |
+          git config user.name "daily-short-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add output/topic_history.json
+          git diff --cached --quiet || git commit -m "Update topic history [skip ci]"
+          git push
+
+      - name: Upload rendered video as an artifact (backup / debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-video
+          path: output/videos/final_video.mp4
+          retention-days: 7

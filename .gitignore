@@ -1,0 +1,6 @@
+.env
+credentials/
+output/*
+!output/topic_history.json
+__pycache__/
+*.pyc

@@ -1,0 +1,7 @@
+requests
+python-dotenv
+faster-whisper
+edge-tts
+moviepy>=2.0
+google-auth-oauthlib
+google-api-python-client
