@@ -96,11 +96,13 @@ def generate_topic(category=None):
 
     recent_topics = [
         entry["topic"]
-        for entry in history[-15:]
+        for entry in history[-25:]
     ]
 
     avoid_block = (
-        "Avoid these recently used topics:\n- "
+        "Avoid these recently used topics AND avoid reusing their main "
+        "subject (same animal, object, place, or phenomenon) even if "
+        "phrased differently:\n- "
         + "\n- ".join(recent_topics)
         if recent_topics
         else ""

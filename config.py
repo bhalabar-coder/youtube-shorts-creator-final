@@ -74,6 +74,12 @@ TOPIC_CATEGORIES = [
 TOPIC_HISTORY_SIZE = 200
 TOPIC_HISTORY_FILE = "output/topic_history.json"
 
+# Recently-used narration hook styles are tracked the same way, so the
+# opening line doesn't fall back to the same "Can you believe..."
+# pattern every time.
+HOOK_HISTORY_SIZE = 30
+HOOK_HISTORY_FILE = "output/hook_history.json"
+
 
 # ============================================================
 # VIDEO
