@@ -3,7 +3,20 @@ import os
 
 import edge_tts
 
-VOICE = "en-US-AriaNeural"
+# en-US-AriaNeural (the old default) reads news-style — energetic and a
+# bit clipped. en-US-JennyNeural is Microsoft's warm/friendly assistant
+# voice, which reads noticeably softer and more conversational.
+#
+# Other good "soft" options if you want to try alternatives:
+#   en-US-AnaNeural      — gentle, slightly younger-sounding
+#   en-GB-SoniaNeural    — calm, warm British accent
+#   en-AU-NatashaNeural  — warm, relaxed Australian accent
+VOICE = "en-US-JennyNeural"
+
+# Dropped the old "+10%" / "+2Hz" boost (faster + higher pitch reads as
+# more hyper/newsy) in favor of a neutral, calmer pace.
+RATE = "+0%"
+PITCH = "+0Hz"
 
 MAX_RETRIES = 3
 
@@ -21,8 +34,8 @@ async def generate_voice(script, output):
             communicate = edge_tts.Communicate(
                 script,
                 VOICE,
-                rate="+10%",
-                pitch="+2Hz"
+                rate=RATE,
+                pitch=PITCH
             )
 
             await communicate.save(output)
