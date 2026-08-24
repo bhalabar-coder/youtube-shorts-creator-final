@@ -109,24 +109,21 @@ def generate_topic(category=None):
     )
 
     prompt = f"""
-Generate ONE viral educational topic for YouTube Shorts.
+        Generate ONE viral educational topic for YouTube Shorts.
 
-Audience:
-{AUDIENCE}
+        Audience: {AUDIENCE} 
+        Category: {category} 
 
-Category:
-{category}
+        Requirements:
+        - Curiosity driven
+        - Easy English
+        - Highly visual (something that can be shown with real footage or photos)
+        - Maximum 8 words 
+        {avoid_block}
 
-Requirements:
-- Curiosity driven
-- Easy English
-- Highly visual (something that can be shown with real footage or photos)
-- Maximum 8 words
+        CRITICAL: Output ONLY the raw topic text. Do NOT include introductory phrases, explanations, meta-commentary, labels, quotes, or ending punctuation. Start directly with the first word of the topic.
 
-{avoid_block}
-
-Return ONLY the topic. No quotes, no labels, no punctuation at the end.
-"""
+        """
 
     last_error = None
 
