@@ -1,4 +1,5 @@
 import os
+import random
 import time
 import requests
 
@@ -165,33 +166,88 @@ def select_pexels_video_file(video):
 
 def find_pexels_video(query):
 
-    for orientation in ("portrait", "landscape"):
+    candidates = []
+
+    for orientation in (
+        "portrait",
+        "landscape"
+    ):
 
         try:
 
-            videos = search_pexels_videos(query, orientation)
+            videos = (
+                search_pexels_videos(
+                    query,
+                    orientation
+                )
+            )
 
             for video in videos:
 
-                selected = select_pexels_video_file(video)
+                selected = (
+                    select_pexels_video_file(
+                        video
+                    )
+                )
 
                 if selected:
 
-                    return {
-                        "type": "video",
-                        "url": selected["link"],
-                        "width": selected["width"],
-                        "height": selected["height"],
-                        "source": "pexels",
-                        "source_id": video.get("id"),
-                        "source_url": video.get("url"),
-                    }
+                    candidates.append({
+
+                        "type":
+                            "video",
+
+                        "url":
+                            selected[
+                                "link"
+                            ],
+
+                        "width":
+                            selected[
+                                "width"
+                            ],
+
+                        "height":
+                            selected[
+                                "height"
+                            ],
+
+                        "source":
+                            "pexels",
+
+                        "source_id":
+                            video.get(
+                                "id"
+                            ),
+
+                        "source_url":
+                            video.get(
+                                "url"
+                            ),
+                    })
 
         except Exception as exc:
 
-            print(f"Pexels {orientation} video search failed: {exc}")
+            print(
+                f"Pexels "
+                f"{orientation} "
+                "video search failed: "
+                f"{exc}"
+            )
 
-    return None
+    if not candidates:
+
+        return None
+
+    # Previously the first Pexels result was always selected.
+    #
+    # Pick from the strongest first few results instead.
+    #
+    # This gives more visual variety between generated videos.
+
+    return random.choice(
+        candidates[:5]
+    )
 
 
 def find_pexels_photo(query):
@@ -454,55 +510,178 @@ def download_media(media, filename):
 # DOWNLOAD SCENE MEDIA
 # ============================================================
 
-def download_scene_media(scenes):
+def download_scene_media(
+    scenes
+):
 
-    Path(CLIPS_DIR).mkdir(parents=True, exist_ok=True)
+    Path(
+        CLIPS_DIR
+    ).mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
     media_files = []
 
-    for index, scene in enumerate(scenes, start=1):
+    used_media_ids = set()
 
-        query = scene.get("search") or scene.get("visual_query")
+    for index, scene in enumerate(
+        scenes,
+        start=1
+    ):
+
+        query = (
+            scene.get(
+                "search"
+            )
+            or
+            scene.get(
+                "visual_query"
+            )
+        )
 
         if not query:
 
-            print(f"Scene {index}: No media query.")
+            print(
+                f"Scene {index}: "
+                "No media query."
+            )
 
             continue
 
-        print("\n--------------------------------")
-        print(f"SCENE {index}")
-        print(f"Query: {query}")
+        print(
+            "\n--------------------------------"
+        )
 
-        media = get_media(query)
+        print(
+            f"SCENE {index}"
+        )
+
+        print(
+            f"Query: {query}"
+        )
+
+        media = None
+
+        # ====================================================
+        # AVOID EXACT DUPLICATE STOCK MEDIA
+        # ====================================================
+
+        for _ in range(3):
+
+            candidate = get_media(
+                query
+            )
+
+            if not candidate:
+
+                break
+
+            media_key = (
+
+                candidate.get(
+                    "source"
+                ),
+
+                candidate.get(
+                    "source_id"
+                ),
+            )
+
+            if (
+                media_key
+                not in used_media_ids
+                or
+                media_key
+                == (None, None)
+            ):
+
+                media = candidate
+
+                used_media_ids.add(
+                    media_key
+                )
+
+                break
+
+            print(
+                "Duplicate stock asset "
+                "detected; trying again."
+            )
 
         if not media:
 
-            print("Skipping scene.")
+            print(
+                "Skipping scene."
+            )
 
             continue
 
-        extension = ".mp4" if media["type"] == "video" else ".jpg"
+        extension = (
+            ".mp4"
+            if media["type"]
+            == "video"
+            else ".jpg"
+        )
 
-        filename = os.path.join(CLIPS_DIR, f"scene_{index}{extension}")
+        filename = os.path.join(
+            CLIPS_DIR,
+            f"scene_{index}"
+            f"{extension}"
+        )
 
         try:
 
-            download_media(media, filename)
+            download_media(
+                media,
+                filename
+            )
 
             media_files.append({
-                "file": filename,
-                "type": media["type"],
-                "source": media.get("source"),
-                "source_url": media.get("source_url"),
-                "source_id": media.get("source_id"),
-                "query": query,
+
+                # Very important.
+                #
+                # Keeps downloaded media linked
+                # to its original scene even if
+                # another scene failed to download.
+
+                "scene_index":
+                    index - 1,
+
+                "file":
+                    filename,
+
+                "type":
+                    media["type"],
+
+                "source":
+                    media.get(
+                        "source"
+                    ),
+
+                "source_url":
+                    media.get(
+                        "source_url"
+                    ),
+
+                "source_id":
+                    media.get(
+                        "source_id"
+                    ),
+
+                "query":
+                    query,
             })
 
-            print(f"Scene {index} ready.")
+            print(
+                f"Scene {index} ready."
+            )
 
         except Exception as exc:
 
-            print(f"Scene {index} failed: {exc}")
+            print(
+                f"Scene {index} "
+                f"failed: {exc}"
+            )
 
     return media_files

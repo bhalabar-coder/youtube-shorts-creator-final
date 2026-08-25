@@ -12,7 +12,8 @@ from config import (
 )
 
 
-SCENE_COUNT = 5
+SCENE_COUNT = 9
+
 
 ANIMATIONS = [
     "zoom_in",
@@ -22,197 +23,476 @@ ANIMATIONS = [
     "static",
 ]
 
-# A real JSON Schema (not just "format": "json") — this constrains
-# Ollama's decoding so the model CANNOT return a single object or a
-# short list. It must return an array of exactly SCENE_COUNT items
-# matching this shape.
+
 SCENE_SCHEMA = {
+
     "type": "array",
+
     "minItems": SCENE_COUNT,
+
     "maxItems": SCENE_COUNT,
+
     "items": {
+
         "type": "object",
+
         "properties": {
-            "scene": {"type": "integer"},
-            "text": {"type": "string"},
-            "search": {"type": "string"},
+
+            "scene": {
+                "type": "integer"
+            },
+
+            "text": {
+                "type": "string"
+            },
+
+            "search": {
+                "type": "string"
+            },
+
             "animation": {
+
                 "type": "string",
+
                 "enum": ANIMATIONS,
             },
+
+            "overlay": {
+                "type": "string"
+            },
         },
-        "required": ["scene", "text", "search", "animation"],
+
+        "required": [
+            "scene",
+            "text",
+            "search",
+            "animation",
+            "overlay",
+        ],
     },
 }
 
 
 # ============================================================
-# JSON EXTRACTION (defensive — schema mode should already return
-# clean JSON, but older Ollama versions / model quirks can still
-# wrap it or add stray text)
+# JSON EXTRACTION
 # ============================================================
 
 def extract_json(text):
 
-    text = re.sub(r"```json", "", text)
-    text = re.sub(r"```", "", text)
-    text = text.strip()
+    text = re.sub(
+        r"```json",
+        "",
+        text
+    )
 
-    start = text.find("[")
-    end = text.rfind("]")
+    text = re.sub(
+        r"```",
+        "",
+        text
+    ).strip()
 
-    if start != -1 and end != -1 and end > start:
+    start = text.find(
+        "["
+    )
+
+    end = text.rfind(
+        "]"
+    )
+
+    if (
+        start != -1
+        and end != -1
+        and end > start
+    ):
+
         try:
-            return json.loads(text[start:end + 1])
-        except json.JSONDecodeError:
-            pass
 
-    obj_start = text.find("{")
-    obj_end = text.rfind("}")
+            return json.loads(
+                text[
+                    start:end + 1
+                ]
+            )
 
-    if obj_start != -1 and obj_end != -1 and obj_end > obj_start:
-        try:
-            parsed = json.loads(text[obj_start:obj_end + 1])
-            for value in parsed.values():
-                if isinstance(value, list):
-                    return value
-            # Single scene object returned instead of a list —
-            # treat it as a 1-item list so validation below can
-            # catch it and retry, rather than crashing here.
-            if "scene" in parsed:
-                return [parsed]
         except json.JSONDecodeError:
+
             pass
 
     raise ValueError(
-        f"No JSON array found in model response. Raw output:\n{text[:500]}"
+        "No JSON array found "
+        "in model response."
     )
 
 
 # ============================================================
-# DETERMINISTIC FALLBACK (no LLM — guarantees SCENE_COUNT distinct
-# scenes even if the model repeatedly fails to follow instructions)
+# FALLBACK
 # ============================================================
 
-def split_narration_into_scenes(topic, script):
+def split_narration_into_scenes(
+    topic,
+    script
+):
 
-    sentences = re.split(r"(?<=[.!?])\s+", script.strip())
+    sentences = [
 
-    sentences = [s for s in sentences if s.strip()]
+        sentence.strip()
+
+        for sentence in re.split(
+            r"(?<=[.!?])\s+",
+            script.strip()
+        )
+
+        if sentence.strip()
+    ]
 
     if not sentences:
-        sentences = [script.strip()]
 
-    # Distribute sentences across SCENE_COUNT buckets as evenly as
-    # possible, keeping sentence order intact.
-    buckets = [[] for _ in range(SCENE_COUNT)]
-
-    for index, sentence in enumerate(sentences):
-        buckets[index % SCENE_COUNT].append(sentence)
+        sentences = [
+            script.strip()
+            or topic
+        ]
 
     scenes = []
 
-    for index, bucket in enumerate(buckets, start=1):
+    for index in range(
+        SCENE_COUNT
+    ):
 
-        text = " ".join(bucket).strip() or topic
+        sentence_index = min(
+            int(
+                index
+                * len(sentences)
+                / SCENE_COUNT
+            ),
+            len(sentences) - 1,
+        )
+
+        text = sentences[
+            sentence_index
+        ]
 
         scenes.append({
-            "scene": index,
-            "text": text,
-            # No per-scene visual context here, so fall back to the
-            # topic itself as the stock-footage search query.
-            "search": topic,
-            "animation": ANIMATIONS[(index - 1) % len(ANIMATIONS)],
+
+            "scene":
+                index + 1,
+
+            "text":
+                text,
+
+            "search":
+                topic,
+
+            "animation":
+                ANIMATIONS[
+                    index
+                    % len(ANIMATIONS)
+                ],
+
+            "overlay":
+                "",
         })
 
     return scenes
 
 
 # ============================================================
-# GENERATE SCENE PLAN
+# VALIDATION
 # ============================================================
 
-def generate_scene_plan(topic, script):
+def _validate_scenes(
+    scenes
+):
+
+    if (
+        not isinstance(
+            scenes,
+            list
+        )
+        or
+        len(scenes)
+        != SCENE_COUNT
+    ):
+
+        raise ValueError(
+            "Expected exactly "
+            f"{SCENE_COUNT} scenes."
+        )
+
+    seen_queries = set()
+
+    for index, scene in enumerate(
+        scenes,
+        start=1
+    ):
+
+        scene[
+            "scene"
+        ] = index
+
+        scene[
+            "text"
+        ] = str(
+            scene.get(
+                "text"
+            ) or ""
+        ).strip()
+
+        scene[
+            "search"
+        ] = str(
+            scene.get(
+                "search"
+            ) or ""
+        ).strip()
+
+        scene[
+            "overlay"
+        ] = str(
+            scene.get(
+                "overlay"
+            ) or ""
+        ).strip()
+
+        animation = (
+            scene.get(
+                "animation"
+            )
+        )
+
+        if animation not in ANIMATIONS:
+
+            scene[
+                "animation"
+            ] = ANIMATIONS[
+                (index - 1)
+                % len(ANIMATIONS)
+            ]
+
+        if not scene["search"]:
+
+            raise ValueError(
+                f"Scene {index} "
+                "has empty search query."
+            )
+
+        normalized_query = (
+            scene[
+                "search"
+            ]
+            .lower()
+        )
+
+        if (
+            normalized_query
+            in seen_queries
+        ):
+
+            raise ValueError(
+                "Duplicate media query: "
+                f"{scene['search']}"
+            )
+
+        seen_queries.add(
+            normalized_query
+        )
+
+        # Overlay should remain short.
+        if (
+            len(
+                scene[
+                    "overlay"
+                ].split()
+            )
+            > 4
+        ):
+
+            scene[
+                "overlay"
+            ] = " ".join(
+                scene[
+                    "overlay"
+                ].split()[:4]
+            )
+
+    return scenes
+
+
+# ============================================================
+# GENERATE SCENES
+# ============================================================
+
+def generate_scene_plan(
+    topic,
+    script
+):
 
     prompt = f"""
-        You are a Pixar storyboard artist.
+You are creating a high-retention visual storyboard
+for a viral educational YouTube Short.
 
-        Topic:
-        {topic}
+Topic:
 
-        Narration:
-        {script}
+{topic}
 
-        Break the narration into exactly {SCENE_COUNT} scenes covering
-        the whole narration in order, from start to finish.
+Narration:
 
-        The "search" field must be 2-4 words describing a REAL,
-        photographable subject (no cartoons, no abstract ideas) so it
-        can be used as a stock footage search query. Make each
-        scene's search query DIFFERENT from the others.
+{script}
 
-        Animation options:
-        zoom_in
-        zoom_out
-        pan_left
-        pan_right
-        static
-        """
+Break the narration into exactly {SCENE_COUNT}
+fast-paced visual scenes.
+
+Keep narration order.
+
+VISUAL RULES:
+
+- Scene 1 must visually reinforce the hook immediately.
+- Change visuals frequently.
+- Every scene must be meaningfully different.
+- Prefer real subjects.
+- Prefer movement.
+- Prefer close-ups.
+- Prefer scale comparisons.
+- Prefer unusual perspectives.
+- Prefer transformations.
+- Prefer dramatic real footage.
+- Avoid generic stock-footage ideas.
+
+Consecutive scenes should change at least one:
+
+- subject
+- scale
+- environment
+- perspective
+- comparison object
+
+SEARCH FIELD:
+
+The "search" field must:
+
+- contain 2-5 words
+- describe a REAL photographable subject
+- work as a Pexels or Pixabay search query
+- be unique for every scene
+
+Bad searches:
+
+interesting science
+amazing nature
+space concept
+
+Good searches:
+
+octopus underwater closeup
+volcano lava eruption
+astronaut earth window
+giant blue whale underwater
+lightning storm slow motion
+
+OVERLAY FIELD:
+
+The "overlay" field is an OPTIONAL
+1-4 word pattern interrupt.
+
+Use it on approximately 2-3 scenes only.
+
+Prefer:
+- Scene 1
+- Important reveal
+- Biggest surprise
+
+Examples:
+
+3 HEARTS?!
+BUT WHY?
+1,000X BIGGER
+THIS IS REAL
+IMPOSSIBLE?
+
+Do not simply repeat the narration.
+
+For scenes without overlay return an empty string.
+
+Animation options:
+
+zoom_in
+zoom_out
+pan_left
+pan_right
+static
+"""
 
     last_error = None
 
-    for attempt in range(1, OLLAMA_MAX_RETRIES + 1):
+    for attempt in range(
+        1,
+        OLLAMA_MAX_RETRIES + 1
+    ):
 
         try:
 
             response = requests.post(
+
                 OLLAMA_URL,
+
                 json={
-                    "model": MODEL_NAME,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": SCENE_SCHEMA,
+
+                    "model":
+                        MODEL_NAME,
+
+                    "prompt":
+                        prompt,
+
+                    "stream":
+                        False,
+
+                    "format":
+                        SCENE_SCHEMA,
                 },
-                timeout=OLLAMA_TIMEOUT,
+
+                timeout=
+                    OLLAMA_TIMEOUT,
             )
 
             response.raise_for_status()
 
-            scenes = extract_json(response.json()["response"])
+            scenes = extract_json(
+                response.json()[
+                    "response"
+                ]
+            )
 
-            if not isinstance(scenes, list) or len(scenes) < SCENE_COUNT:
-                raise ValueError(
-                    f"Expected {SCENE_COUNT} scenes, got "
-                    f"{len(scenes) if isinstance(scenes, list) else 'non-list'}."
-                )
-
-            # Trim in case the model over-delivers.
-            scenes = scenes[:SCENE_COUNT]
-
-            # Re-number in case the model's own numbering is off.
-            for index, scene in enumerate(scenes, start=1):
-                scene["scene"] = index
-
-            return scenes
+            return _validate_scenes(
+                scenes
+            )
 
         except Exception as exc:
 
             last_error = exc
 
-            print(f"Scene plan attempt {attempt} failed: {exc}")
+            print(
+                f"Scene plan attempt "
+                f"{attempt} failed: "
+                f"{exc}"
+            )
 
-            if attempt < OLLAMA_MAX_RETRIES:
-                time.sleep(attempt * 2)
+            if (
+                attempt
+                < OLLAMA_MAX_RETRIES
+            ):
 
-    # --------------------------------------------------------
-    # Every LLM attempt failed to produce a valid scene list —
-    # fall back to a deterministic split so the pipeline still
-    # produces a real multi-scene video instead of looping one clip.
-    # --------------------------------------------------------
+                time.sleep(
+                    attempt * 2
+                )
 
     print(
-        f"All {OLLAMA_MAX_RETRIES} scene-plan attempts failed "
-        f"({last_error}). Falling back to a deterministic narration split."
+        "All scene-plan attempts failed. "
+        "Using fallback."
     )
 
-    return split_narration_into_scenes(topic, script)
+    print(
+        last_error
+    )
+
+    return split_narration_into_scenes(
+        topic,
+        script
+    )

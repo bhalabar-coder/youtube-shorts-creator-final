@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import time
 
 import requests
@@ -17,8 +18,11 @@ from config import (
 )
 
 
+TOPIC_CANDIDATE_COUNT = 5
+
+
 # ============================================================
-# HISTORY (keeps the channel from repeating itself)
+# HISTORY
 # ============================================================
 
 def load_history():
@@ -27,26 +31,47 @@ def load_history():
         return []
 
     try:
-        with open(TOPIC_HISTORY_FILE, "r", encoding="utf-8") as file:
+
+        with open(
+            TOPIC_HISTORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
             return json.load(file)
+
     except Exception:
+
         return []
 
 
 def save_history(history):
 
     os.makedirs(
-        os.path.dirname(TOPIC_HISTORY_FILE),
+        os.path.dirname(TOPIC_HISTORY_FILE) or ".",
         exist_ok=True
     )
 
     trimmed = history[-TOPIC_HISTORY_SIZE:]
 
-    with open(TOPIC_HISTORY_FILE, "w", encoding="utf-8") as file:
-        json.dump(trimmed, file, indent=2, ensure_ascii=False)
+    with open(
+        TOPIC_HISTORY_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            trimmed,
+            file,
+            indent=2,
+            ensure_ascii=False
+        )
 
 
-def add_to_history(topic, category):
+def add_to_history(
+    topic,
+    category
+):
 
     history = load_history()
 
@@ -55,7 +80,9 @@ def add_to_history(topic, category):
         "category": category,
     })
 
-    save_history(history)
+    save_history(
+        history
+    )
 
 
 # ============================================================
@@ -65,96 +92,329 @@ def add_to_history(topic, category):
 def pick_category(history):
 
     recent_categories = [
-        entry["category"]
+        entry.get("category")
         for entry in history[-6:]
+        if entry.get("category")
     ]
 
-    # Prefer categories that haven't been used in the last few runs,
-    # falling back to the full list if everything has been used
-    # recently (small TOPIC_CATEGORIES pools, early runs, etc.).
     fresh = [
         category
         for category in TOPIC_CATEGORIES
         if category not in recent_categories
     ]
 
-    pool = fresh if fresh else TOPIC_CATEGORIES
+    return random.choice(
+        fresh
+        if fresh
+        else TOPIC_CATEGORIES
+    )
 
-    return random.choice(pool)
+
+# ============================================================
+# OLLAMA
+# ============================================================
+
+def _ollama(prompt):
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL_NAME,
+            "prompt": prompt,
+            "stream": False,
+        },
+        timeout=OLLAMA_TIMEOUT,
+    )
+
+    response.raise_for_status()
+
+    return response.json()[
+        "response"
+    ].strip()
+
+
+# ============================================================
+# CLEAN TOPIC
+# ============================================================
+
+def _clean_candidate(line):
+
+    line = re.sub(
+        r"^\s*[-*\d.)]+\s*",
+        "",
+        line.strip()
+    )
+
+    line = (
+        line
+        .strip('"')
+        .strip("'")
+        .strip()
+    )
+
+    line = line.rstrip(
+        ".!:;-"
+    )
+
+    return line.strip()
+
+
+# ============================================================
+# GENERATE MULTIPLE CANDIDATES
+# ============================================================
+
+def generate_candidates(
+    category,
+    recent_topics
+):
+
+    avoid_block = ""
+
+    if recent_topics:
+
+        avoid_block = (
+            "Avoid these recently used topics and their "
+            "main subjects:\n- "
+            +
+            "\n- ".join(
+                recent_topics
+            )
+        )
+
+    prompt = f"""
+Generate exactly {TOPIC_CANDIDATE_COUNT} high-retention educational
+YouTube Shorts topic ideas.
+
+Audience:
+{AUDIENCE}
+
+Category:
+{category}
+
+Each idea must:
+
+- create an immediate curiosity gap
+- contain a surprising fact, mystery, misconception,
+  comparison, or question
+- be understandable by a non-expert
+- be highly visual with real footage or photos
+- have broad audience appeal
+- have strong share/comment potential
+- be specific enough for a 20-40 second Short
+- be maximum 9 words
+- be meaningfully different from the other ideas
+
+Avoid generic ideas such as:
+
+Amazing Space Facts
+Cool Animal Facts
+Interesting Science Facts
+
+{avoid_block}
+
+Return ONLY {TOPIC_CANDIDATE_COUNT} topics.
+
+One topic per line.
+
+No labels.
+No explanations.
+"""
+
+    raw = _ollama(
+        prompt
+    )
+
+    candidates = []
+
+    for line in raw.splitlines():
+
+        topic = _clean_candidate(
+            line
+        )
+
+        if not topic:
+            continue
+
+        if topic.lower() in {
+            item.lower()
+            for item in candidates
+        }:
+            continue
+
+        candidates.append(
+            topic
+        )
+
+    return candidates[
+        :TOPIC_CANDIDATE_COUNT
+    ]
+
+
+# ============================================================
+# SELECT STRONGEST TOPIC
+# ============================================================
+
+def select_best_topic(
+    candidates,
+    category
+):
+
+    numbered = "\n".join(
+        f"{index}. {topic}"
+        for index, topic in enumerate(
+            candidates,
+            start=1
+        )
+    )
+
+    prompt = f"""
+You are selecting the strongest concept for a YouTube Short.
+
+Category:
+{category}
+
+Candidates:
+
+{numbered}
+
+Judge each idea on:
+
+- curiosity in the first second
+- surprise
+- broad audience appeal
+- visual potential using real footage/photos
+- ability to deliver a satisfying payoff in under 40 seconds
+- share potential
+- comment potential
+
+Prefer a concrete and instantly understandable idea
+over a broad subject.
+
+Avoid misleading clickbait.
+
+Return ONLY the number of the strongest candidate.
+"""
+
+    raw = _ollama(
+        prompt
+    )
+
+    match = re.search(
+        r"\b([1-9])\b",
+        raw
+    )
+
+    if match:
+
+        selected_index = (
+            int(match.group(1))
+            - 1
+        )
+
+        if (
+            0
+            <= selected_index
+            < len(candidates)
+        ):
+
+            return candidates[
+                selected_index
+            ]
+
+    # Safe fallback
+    return candidates[0]
 
 
 # ============================================================
 # GENERATE TOPIC
 # ============================================================
 
-def generate_topic(category=None):
+def generate_topic(
+    category=None,
+    return_category=False
+):
 
     history = load_history()
 
     if category is None:
-        category = pick_category(history)
+
+        category = pick_category(
+            history
+        )
 
     recent_topics = [
-        entry["topic"]
+        entry.get(
+            "topic",
+            ""
+        )
         for entry in history[-25:]
+        if entry.get("topic")
     ]
-
-    avoid_block = (
-        "Avoid these recently used topics AND avoid reusing their main "
-        "subject (same animal, object, place, or phenomenon) even if "
-        "phrased differently:\n- "
-        + "\n- ".join(recent_topics)
-        if recent_topics
-        else ""
-    )
-
-    prompt = f"""
-        Generate ONE viral educational topic for YouTube Shorts.
-
-        Audience: {AUDIENCE} 
-        Category: {category} 
-
-        Requirements:
-        - Curiosity driven
-        - Easy English
-        - Highly visual (something that can be shown with real footage or photos)
-        - Maximum 8 words 
-        {avoid_block}
-
-        CRITICAL: Output ONLY the raw topic text. Do NOT include introductory phrases, explanations, meta-commentary, labels, quotes, or ending punctuation. Start directly with the first word of the topic.
-
-        """
 
     last_error = None
 
-    for attempt in range(1, OLLAMA_MAX_RETRIES + 1):
+    for attempt in range(
+        1,
+        OLLAMA_MAX_RETRIES + 1
+    ):
 
         try:
 
-            response = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": MODEL_NAME,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=OLLAMA_TIMEOUT,
+            candidates = (
+                generate_candidates(
+                    category,
+                    recent_topics
+                )
             )
 
-            response.raise_for_status()
+            if len(candidates) < 2:
 
-            topic = response.json()["response"].strip()
+                raise ValueError(
+                    "Only "
+                    f"{len(candidates)} "
+                    "usable topic candidate(s) returned."
+                )
 
-            # Strip stray quotes/labels the model sometimes adds.
-            topic = topic.strip('"').strip("'").strip()
-
-            if topic.lower().startswith("topic:"):
-                topic = topic[len("topic:"):].strip()
+            topic = select_best_topic(
+                candidates,
+                category
+            )
 
             if not topic:
-                raise ValueError("Model returned an empty topic.")
 
-            add_to_history(topic, category)
+                raise ValueError(
+                    "Topic selector returned "
+                    "an empty topic."
+                )
+
+            print(
+                "Topic candidates:"
+            )
+
+            for candidate in candidates:
+
+                marker = (
+                    " <-- selected"
+                    if candidate == topic
+                    else ""
+                )
+
+                print(
+                    f"  - {candidate}"
+                    f"{marker}"
+                )
+
+            add_to_history(
+                topic,
+                category
+            )
+
+            if return_category:
+
+                return (
+                    topic,
+                    category
+                )
 
             return topic
 
@@ -162,12 +422,23 @@ def generate_topic(category=None):
 
             last_error = exc
 
-            print(f"Topic generation attempt {attempt} failed: {exc}")
+            print(
+                "Topic generation "
+                f"attempt {attempt} "
+                f"failed: {exc}"
+            )
 
-            if attempt < OLLAMA_MAX_RETRIES:
-                time.sleep(attempt * 2)
+            if (
+                attempt
+                < OLLAMA_MAX_RETRIES
+            ):
+
+                time.sleep(
+                    attempt * 2
+                )
 
     raise RuntimeError(
-        f"Unable to generate a topic after {OLLAMA_MAX_RETRIES} "
-        f"attempts: {last_error}"
+        "Unable to generate a topic after "
+        f"{OLLAMA_MAX_RETRIES} attempts: "
+        f"{last_error}"
     )

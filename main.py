@@ -4,7 +4,11 @@ import re
 import shutil
 
 from agents.topic_agent import generate_topic
-from agents.script_agent import generate_script
+from agents.script_agent import (
+    generate_script,
+    review_script,
+    generate_title,
+)
 from agents.scene_agent import generate_scene_plan
 from agents.media_agent import download_scene_media
 from agents.voice_agent import generate_voice
@@ -61,13 +65,42 @@ def clean_youtube_description(text):
     return text.strip()
 
 
-def build_tags(topic, category):
+def build_tags(
+    topic,
+    category
+):
 
-    words = re.findall(r"[a-zA-Z']+", f"{topic} {category}")
+    words = re.findall(
+        r"[a-zA-Z']+",
+        f"{topic} {category}"
+    )
 
-    tags = sorted(set(word.lower() for word in words if len(word) > 3))
+    unique = []
 
-    return tags[:15] + ["shorts", "education", "facts"]
+    for word in words:
+
+        word = (
+            word.lower()
+        )
+
+        if (
+            len(word) >= 4
+            and
+            word not in unique
+        ):
+
+            unique.append(
+                word
+            )
+
+    return (
+        unique[:8]
+        +
+        [
+            "educational shorts",
+            "interesting facts",
+        ]
+    )
 
 
 def parse_args():
@@ -118,8 +151,12 @@ def main():
         topic = args.topic
         category = args.category or "custom"
     else:
-        topic = generate_topic(category=args.category)
-        category = args.category or "auto-selected"
+        topic, category = (
+            generate_topic(
+                category=args.category,
+                return_category=True,
+            )
+        )
 
     print(f"TOPIC: {topic}")
     print(f"CATEGORY: {category}")
@@ -131,6 +168,11 @@ def main():
     print("\n[2/8] Generating script...")
 
     script = generate_script(topic)
+
+    script = review_script(
+        topic,
+        script
+    )
 
     print(f"\nSCRIPT:\n{script}")
 
@@ -199,13 +241,32 @@ def main():
 
         print("\n[8/8] Uploading to YouTube...")
 
-        clean_description = clean_youtube_description(script)
+        clean_description = (
+            clean_youtube_description(
+                script
+            )
+        )
 
-        tags = build_tags(topic, category)
+        youtube_title = (
+            generate_title(
+                topic,
+                script
+            )
+        )
+
+        tags = build_tags(
+            topic,
+            category
+        )
+
+        print(
+            f"YouTube title: "
+            f"{youtube_title}"
+        )
 
         upload_video(
             OUTPUT_VIDEO,
-            title=topic,
+            title=youtube_title,
             description=clean_description,
             tags=tags,
         )

@@ -7,7 +7,9 @@ from moviepy import (
     VideoFileClip,
     AudioFileClip,
     CompositeVideoClip,
+    CompositeAudioClip,
     concatenate_videoclips,
+    concatenate_audioclips,
     TextClip,
     ColorClip,
     ImageClip,
@@ -37,9 +39,13 @@ TRANSITION_DURATION = 0.35
 ZOOM_MIN = 1.00
 ZOOM_MAX = 1.08
 
-CAPTION_FONT_SIZE = 64
+CAPTION_FONT_SIZE = 72
 
-CAPTION_Y = 1630
+CAPTION_Y = int(
+    VIDEO_HEIGHT * 0.72
+)
+
+OVERLAY_FONT_SIZE = 104
 
 CAPTION_MARGIN = 70
 
@@ -563,6 +569,69 @@ def parse_timestamp(value):
 # CAPTION CLIP
 # ============================================================
 
+def caption_has_emphasis(
+    text
+):
+
+    important_words = {
+
+        "never",
+        "only",
+        "secret",
+        "largest",
+        "smallest",
+        "fastest",
+        "deadliest",
+        "oldest",
+        "youngest",
+        "million",
+        "billion",
+        "trillion",
+        "impossible",
+        "weird",
+        "giant",
+        "tiny",
+    }
+
+    words = [
+
+        word
+        .strip(
+            ".,!?;:'\""
+        )
+        .lower()
+
+        for word
+        in text.split()
+    ]
+
+    has_number = any(
+
+        any(
+            char.isdigit()
+            for char
+            in word
+        )
+
+        for word
+        in words
+    )
+
+    has_keyword = any(
+
+        word
+        in important_words
+
+        for word
+        in words
+    )
+
+    return (
+        has_number
+        or
+        has_keyword
+    )
+
 def create_caption_clip(
     caption
 ):
@@ -585,7 +654,13 @@ def create_caption_clip(
 
             font_size=CAPTION_FONT_SIZE,
 
-            color="white",
+            color=(
+                "yellow"
+                if caption_has_emphasis(
+                    text
+                )
+                else "white"
+            ),
 
             stroke_color="black",
 
@@ -807,7 +882,7 @@ def add_background_music(
                 )
             ]
 
-            music = concatenate_videoclips(
+            music = concatenate_audioclips(
                 music_parts
             )
 
@@ -823,8 +898,6 @@ def add_background_music(
         current_audio = video.audio
 
         if current_audio is not None:
-
-            from moviepy import CompositeAudioClip
 
             combined_audio = (
                 CompositeAudioClip(
@@ -857,6 +930,57 @@ def add_background_music(
 # ============================================================
 # BUILD SCENES
 # ============================================================
+
+def calculate_scene_durations(
+    total_duration,
+    count
+):
+    """
+    First visual cuts are intentionally faster.
+
+    This makes the first few seconds feel
+    significantly more active.
+    """
+
+    if count <= 0:
+
+        return []
+
+    if count == 1:
+
+        return [
+            total_duration
+        ]
+
+    weights = [
+        0.55,
+        0.75,
+        0.90,
+    ]
+
+    while len(weights) < count:
+
+        weights.append(
+            1.0
+        )
+
+    weights = weights[
+        :count
+    ]
+
+    total_weight = sum(
+        weights
+    )
+
+    return [
+
+        total_duration
+        * weight
+        / total_weight
+
+        for weight
+        in weights
+    ]
 
 def build_scene_clips(
     media_files,
@@ -893,9 +1017,8 @@ def build_scene_clips(
     # successfully downloaded.
     # ========================================================
 
-    usable_count = min(
-        len(media_files),
-        len(scenes)
+    usable_count = len(
+        media_files
     )
 
     if usable_count == 0:
@@ -904,13 +1027,21 @@ def build_scene_clips(
             "No usable scenes available."
         )
 
-    scene_duration = (
-        duration / usable_count
+    scene_durations = (
+        calculate_scene_durations(
+            duration,
+            usable_count
+        )
     )
 
     print(
-        f"Scene duration: "
-        f"{scene_duration:.2f} seconds"
+        "Scene durations: "
+        +
+        ", ".join(
+            f"{value:.2f}s"
+            for value
+            in scene_durations
+        )
     )
 
     # ========================================================
@@ -921,11 +1052,41 @@ def build_scene_clips(
         usable_count
     ):
 
-        scene = scenes[index]
+        media = media_files[
+            index
+        ]
 
-        media = media_files[index]
+        scene_index = (
+            media.get(
+                "scene_index",
+                index
+            )
+        )
 
-        filename = media["file"]
+        if (
+            scene_index < 0
+            or
+            scene_index >= len(scenes)
+        ):
+
+            scene_index = min(
+                index,
+                len(scenes) - 1
+            )
+
+        scene = scenes[
+            scene_index
+        ]
+
+        scene_duration = (
+            scene_durations[
+                index
+            ]
+        )
+
+        filename = media[
+            "file"
+        ]
 
         media_type = media["type"]
 
@@ -1158,6 +1319,141 @@ def build_scene_clips(
     return clips
 
 # ============================================================
+# PATTERN INTERRUPT OVERLAYS
+# ============================================================
+
+def create_scene_overlays(
+    clips,
+    media_files,
+    scenes
+):
+
+    overlays = []
+
+    start_time = 0.0
+
+    for index, clip in enumerate(
+        clips
+    ):
+
+        media = (
+            media_files[index]
+            if index
+            < len(media_files)
+            else {}
+        )
+
+        scene_index = (
+            media.get(
+                "scene_index",
+                index
+            )
+        )
+
+        if (
+            0
+            <= scene_index
+            < len(scenes)
+        ):
+
+            overlay_text = str(
+                scenes[
+                    scene_index
+                ].get(
+                    "overlay"
+                )
+                or ""
+            ).strip()
+
+        else:
+
+            overlay_text = ""
+
+        if overlay_text:
+
+            try:
+
+                overlay_duration = min(
+                    0.80,
+                    max(
+                        0.45,
+                        clip.duration
+                        * 0.35
+                    )
+                )
+
+                overlay = TextClip(
+
+                    text=
+                        overlay_text.upper(),
+
+                    font_size=
+                        OVERLAY_FONT_SIZE,
+
+                    color=
+                        "white",
+
+                    stroke_color=
+                        "black",
+
+                    stroke_width=
+                        6,
+
+                    method=
+                        "caption",
+
+                    size=(
+                        VIDEO_WIDTH - 140,
+                        280
+                    ),
+
+                    text_align=
+                        "center",
+                )
+
+                overlay = (
+
+                    overlay
+
+                    .with_start(
+                        start_time
+                        + 0.05
+                    )
+
+                    .with_duration(
+                        overlay_duration
+                    )
+
+                    .with_position(
+                        (
+                            "center",
+                            int(
+                                VIDEO_HEIGHT
+                                * 0.32
+                            )
+                        )
+                    )
+                )
+
+                overlays.append(
+                    overlay
+                )
+
+            except Exception as exc:
+
+                print(
+                    "Scene overlay "
+                    "creation failed: "
+                    f"{exc}"
+                )
+
+        start_time += (
+            clip.duration
+        )
+
+    return overlays
+
+# ============================================================
 # ADD TRANSITIONS
 # ============================================================
 
@@ -1169,51 +1465,16 @@ def concatenate_scenes(
 
         return clips[0]
 
-    processed = []
+    # Hard cuts are intentional.
+    #
+    # For short-form content they usually feel
+    # faster and more energetic than applying
+    # a crossfade to every scene.
 
-    for index, clip in enumerate(
-        clips
-    ):
-
-        if index == 0:
-
-            processed.append(
-                clip
-            )
-
-            continue
-
-        # Slight overlap creates a smoother
-        # visual change.
-
-        transition = min(
-            TRANSITION_DURATION,
-            clip.duration / 3,
-            clips[index - 1].duration / 3
-        )
-
-        clip = clip.with_start(
-            -transition
-        )
-
-        processed.append(
-            clip
-        )
-
-    try:
-
-        return concatenate_videoclips(
-            clips,
-            method="compose",
-            padding=-TRANSITION_DURATION
-        )
-
-    except Exception:
-
-        return concatenate_videoclips(
-            clips,
-            method="compose"
-        )
+    return concatenate_videoclips(
+        clips,
+        method="compose"
+    )
 
 
 # ============================================================
@@ -1262,9 +1523,8 @@ def build_video(
         "Joining scenes..."
     )
 
-    video = concatenate_videoclips(
-        clips,
-        method="compose"
+    video = concatenate_scenes(
+        clips
     )
 
     # --------------------------------------------------------
@@ -1335,13 +1595,21 @@ def build_video(
     # Composite
     # --------------------------------------------------------
 
+    pattern_layers = (
+        create_scene_overlays(
+            clips,
+            media_files,
+            scenes
+        )
+    )
+
     layers = [
         video
     ]
 
-    # layers.extend(
-    #     progress_layers
-    # )
+    layers.extend(
+        pattern_layers
+    )
 
     layers.extend(
         caption_layers

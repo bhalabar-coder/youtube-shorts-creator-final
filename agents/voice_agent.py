@@ -15,7 +15,7 @@ VOICE = "en-US-JennyNeural"
 
 # Dropped the old "+10%" / "+2Hz" boost (faster + higher pitch reads as
 # more hyper/newsy) in favor of a neutral, calmer pace.
-RATE = "+0%"
+RATE = "+8%"
 PITCH = "+0Hz"
 
 MAX_RETRIES = 3

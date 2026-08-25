@@ -1,6 +1,7 @@
-import re
 import json
 import os
+import re
+
 from faster_whisper import WhisperModel
 
 from config import (
@@ -15,13 +16,40 @@ from config import (
 
 WHISPER_MODEL = "small"
 
-MAX_WORDS_PER_CAPTION = 5
+MAX_WORDS_PER_CAPTION = 4
 
-MIN_WORDS_PER_CAPTION = 2
+MIN_WORDS_PER_CAPTION = 1
 
-MAX_CAPTION_DURATION = 2.2
+MAX_CAPTION_DURATION = 1.5
 
-MIN_CAPTION_DURATION = 0.45
+MIN_CAPTION_DURATION = 0.30
+
+
+IMPORTANT_WORDS = {
+
+    "actually",
+    "always",
+    "billion",
+    "biggest",
+    "deadliest",
+    "deepest",
+    "fastest",
+    "giant",
+    "huge",
+    "impossible",
+    "incredible",
+    "largest",
+    "million",
+    "never",
+    "oldest",
+    "only",
+    "secret",
+    "smallest",
+    "tiny",
+    "trillion",
+    "weird",
+    "youngest",
+}
 
 
 # ============================================================
@@ -31,7 +59,11 @@ MIN_CAPTION_DURATION = 0.45
 def timestamp(seconds):
 
     milliseconds = int(
-        (seconds - int(seconds))
+        (
+            seconds
+            -
+            int(seconds)
+        )
         * 1000
     )
 
@@ -40,16 +72,21 @@ def timestamp(seconds):
     )
 
     hours = (
-        total_seconds // 3600
+        total_seconds
+        // 3600
     )
 
     minutes = (
-        (total_seconds % 3600)
+        (
+            total_seconds
+            % 3600
+        )
         // 60
     )
 
     secs = (
-        total_seconds % 60
+        total_seconds
+        % 60
     )
 
     return (
@@ -61,24 +98,20 @@ def timestamp(seconds):
 
 
 # ============================================================
-# CLEAN TEXT
+# CLEAN WORD
 # ============================================================
 
 def clean_word(word):
 
-    word = word.strip()
-
-    word = re.sub(
+    return re.sub(
         r"\s+",
         " ",
-        word
+        word.strip()
     )
-
-    return word
 
 
 # ============================================================
-# IMPORTANT WORD DETECTION
+# IMPORTANT WORD
 # ============================================================
 
 def is_important_word(
@@ -86,45 +119,27 @@ def is_important_word(
 ):
 
     clean = re.sub(
-        r"[^a-zA-Z]",
+        r"[^a-zA-Z0-9.]",
         "",
         word
     ).lower()
 
-    important_words = {
-        "amazing",
-        "incredible",
-        "wow",
-        "secret",
-        "why",
-        "how",
-        "never",
-        "always",
-        "giant",
-        "tiny",
-        "huge",
-        "fast",
-        "slow",
-        "space",
-        "planet",
-        "earth",
-        "moon",
-        "sun",
-        "star",
-        "ocean",
-        "dinosaur",
-        "volcano",
-        "bee",
-        "bees",
-        "honey",
-        "shark",
-        "whale",
-        "dolphin",
-        "fire",
-        "water",
-    }
+    if not clean:
 
-    return clean in important_words
+        return False
+
+    # Numbers are excellent visual emphasis candidates.
+    if any(
+        char.isdigit()
+        for char in clean
+    ):
+
+        return True
+
+    return (
+        clean
+        in IMPORTANT_WORDS
+    )
 
 
 # ============================================================
@@ -145,42 +160,43 @@ def group_words(
             word
         )
 
-        start = current[0]["start"]
+        start = (
+            current[0][
+                "start"
+            ]
+        )
 
-        end = current[-1]["end"]
+        end = (
+            current[-1][
+                "end"
+            ]
+        )
 
         duration = (
             end - start
         )
 
-        # ----------------------------------------------------
-        # Break after punctuation
-        # ----------------------------------------------------
-
         punctuation_break = (
-            word["word"].rstrip()
+            word[
+                "word"
+            ]
+            .rstrip()
             .endswith(
                 (
                     ".",
                     "?",
                     "!",
-                    ","
+                    ",",
+                    ";",
+                    ":",
                 )
             )
         )
-
-        # ----------------------------------------------------
-        # Break after word count
-        # ----------------------------------------------------
 
         word_limit = (
             len(current)
             >= MAX_WORDS_PER_CAPTION
         )
-
-        # ----------------------------------------------------
-        # Break if caption too long
-        # ----------------------------------------------------
 
         duration_limit = (
             duration
@@ -196,6 +212,9 @@ def group_words(
             if (
                 len(current)
                 >= MIN_WORDS_PER_CAPTION
+                and
+                duration
+                >= MIN_CAPTION_DURATION
             ):
 
                 captions.append(
@@ -214,15 +233,26 @@ def group_words(
 
 
 # ============================================================
-# CREATE SRT
+# CREATE CAPTIONS
 # ============================================================
 
 def create_captions(
     audio_file
 ):
 
-    os.makedirs(os.path.dirname(OUTPUT_CAPTIONS) or ".", exist_ok=True)
-    os.makedirs(os.path.dirname(OUTPUT_WORDS) or ".", exist_ok=True)
+    os.makedirs(
+        os.path.dirname(
+            OUTPUT_CAPTIONS
+        ) or ".",
+        exist_ok=True
+    )
+
+    os.makedirs(
+        os.path.dirname(
+            OUTPUT_WORDS
+        ) or ".",
+        exist_ok=True
+    )
 
     print(
         "Loading Whisper model..."
@@ -238,10 +268,12 @@ def create_captions(
         "Transcribing narration..."
     )
 
-    segments, _ = model.transcribe(
-        audio_file,
-        word_timestamps=True,
-        vad_filter=True,
+    segments, _ = (
+        model.transcribe(
+            audio_file,
+            word_timestamps=True,
+            vad_filter=True,
+        )
     )
 
     all_words = []
@@ -263,14 +295,20 @@ def create_captions(
                 continue
 
             all_words.append({
-                "word": text,
-                "start": word.start,
-                "end": word.end,
-                "important": (
+
+                "word":
+                    text,
+
+                "start":
+                    word.start,
+
+                "end":
+                    word.end,
+
+                "important":
                     is_important_word(
                         text
-                    )
-                ),
+                    ),
             })
 
     if not all_words:
@@ -286,8 +324,13 @@ def create_captions(
 
     print(
         f"Generated "
-        f"{len(groups)} caption groups."
+        f"{len(groups)} "
+        "caption groups."
     )
+
+    # ========================================================
+    # SRT
+    # ========================================================
 
     with open(
         OUTPUT_CAPTIONS,
@@ -300,17 +343,22 @@ def create_captions(
             start=1
         ):
 
-            start = group[0][
-                "start"
-            ]
+            start = (
+                group[0][
+                    "start"
+                ]
+            )
 
-            end = group[-1][
-                "end"
-            ]
+            end = (
+                group[-1][
+                    "end"
+                ]
+            )
 
             text = " ".join(
                 word["word"]
-                for word in group
+                for word
+                in group
             )
 
             file.write(
@@ -318,7 +366,8 @@ def create_captions(
             )
 
             file.write(
-                f"{timestamp(start)} --> "
+                f"{timestamp(start)} "
+                "--> "
                 f"{timestamp(end)}\n"
             )
 
@@ -329,6 +378,10 @@ def create_captions(
             file.write(
                 "\n\n"
             )
+
+    # ========================================================
+    # WORD LEVEL JSON
+    # ========================================================
 
     with open(
         OUTPUT_WORDS,

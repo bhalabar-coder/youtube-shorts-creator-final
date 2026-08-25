@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 import time
 
 import requests
@@ -19,99 +20,272 @@ from config import (
 # ============================================================
 # HOOK STYLES
 # ============================================================
-# A small local model tends to latch onto whichever single example
-# it's shown ("Can you believe...") and reuse it almost every time.
-# Forcing one specific, named style per script — and rotating which
-# style gets picked — is what actually produces variety.
 
 HOOK_STYLES = [
-    ("shocking_fact", (
-        "Open with a bold, jaw-dropping statement of fact. "
-        "No question mark — state it as fact."
-    )),
-    ("surprising_question", (
-        "Open with a surprising question. Do NOT use 'Can you believe' "
-        "or 'Did you know' — invent a different question."
-    )),
-    ("myth_debunk", (
-        "Open by stating what most people believe, then immediately "
-        "contradict it in the same or next sentence "
-        "(e.g. 'Everyone thinks X. They're wrong.')."
-    )),
-    ("direct_challenge", (
-        "Open by challenging the viewer directly, e.g. 'Try to guess...' "
-        "or 'Bet you didn't know...'."
-    )),
-    ("mystery_hook", (
-        "Open by framing the topic as an unsolved mystery or puzzle "
-        "scientists are still figuring out."
-    )),
-    ("imagine_scenario", (
-        "Open with 'Imagine if...' or a vivid hypothetical scenario "
-        "the viewer can picture."
-    )),
-    ("comparison_hook", (
-        "Open with a striking comparison between two things — size, "
-        "speed, distance, or quantity."
-    )),
-    ("number_hook", (
-        "Open with a specific, surprising number or statistic as the "
-        "very first words of the sentence."
-    )),
-    ("cliffhanger_statement", (
-        "Open with an incomplete, tension-building statement that gets "
-        "resolved a sentence or two later."
-    )),
-    ("second_person_flip", (
-        "Open by describing something the viewer thinks is true, then "
-        "flipping it within the same sentence."
-    )),
+
+    (
+        "shocking_fact",
+        (
+            "Open with a bold surprising fact. "
+            "Do not use a question."
+        )
+    ),
+
+    (
+        "surprising_question",
+        (
+            "Open with an unusual question. "
+            "Never use 'Did you know' or "
+            "'Can you believe'."
+        )
+    ),
+
+    (
+        "myth_debunk",
+        (
+            "Open with a common belief, then "
+            "immediately contradict it."
+        )
+    ),
+
+    (
+        "direct_challenge",
+        (
+            "Open with a short challenge or "
+            "guess for the viewer."
+        )
+    ),
+
+    (
+        "mystery_hook",
+        (
+            "Open with a mystery or puzzle "
+            "that needs an explanation."
+        )
+    ),
+
+    (
+        "imagine_scenario",
+        (
+            "Open with a vivid 'Imagine...' "
+            "scenario the viewer can picture."
+        )
+    ),
+
+    (
+        "comparison_hook",
+        (
+            "Open with a striking size, speed, "
+            "distance, age, or quantity comparison."
+        )
+    ),
+
+    (
+        "number_hook",
+        (
+            "Open with a specific surprising "
+            "number as the first words."
+        )
+    ),
+
+    (
+        "cliffhanger_statement",
+        (
+            "Open with a tension-building statement "
+            "whose explanation comes later."
+        )
+    ),
+
+    (
+        "second_person_flip",
+        (
+            "Open with something the viewer assumes "
+            "is true, then flip it."
+        )
+    ),
 ]
+
 
 BANNED_OPENERS = (
     "can you believe",
     "did you know",
+    "today we're",
+    "today we are",
+    "in this video",
+    "welcome",
 )
 
 
 # ============================================================
-# HOOK HISTORY (avoids repeating the same style run after run)
+# HISTORY
 # ============================================================
 
 def load_hook_history():
 
-    if not os.path.exists(HOOK_HISTORY_FILE):
+    if not os.path.exists(
+        HOOK_HISTORY_FILE
+    ):
         return []
 
     try:
-        with open(HOOK_HISTORY_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
+
+        with open(
+            HOOK_HISTORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            return json.load(
+                file
+            )
+
     except Exception:
+
         return []
 
 
-def save_hook_history(history):
+def save_hook_history(
+    history
+):
 
-    os.makedirs(os.path.dirname(HOOK_HISTORY_FILE) or ".", exist_ok=True)
+    os.makedirs(
+        os.path.dirname(
+            HOOK_HISTORY_FILE
+        ) or ".",
+        exist_ok=True
+    )
 
-    trimmed = history[-HOOK_HISTORY_SIZE:]
+    trimmed = history[
+        -HOOK_HISTORY_SIZE:
+    ]
 
-    with open(HOOK_HISTORY_FILE, "w", encoding="utf-8") as file:
-        json.dump(trimmed, file, indent=2, ensure_ascii=False)
+    with open(
+        HOOK_HISTORY_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            trimmed,
+            file,
+            indent=2,
+            ensure_ascii=False
+        )
 
 
-def pick_hook_style(history, exclude_keys):
+def pick_hook_style(
+    history,
+    exclude_keys
+):
 
-    recent_keys = [entry["style"] for entry in history[-4:]] + list(exclude_keys)
+    recent_keys = (
+        [
+            entry.get("style")
+            for entry in history[-4:]
+        ]
+        +
+        list(
+            exclude_keys
+        )
+    )
 
     fresh = [
-        style for style in HOOK_STYLES
+        style
+        for style in HOOK_STYLES
         if style[0] not in recent_keys
     ]
 
-    pool = fresh if fresh else HOOK_STYLES
+    return random.choice(
+        fresh
+        if fresh
+        else HOOK_STYLES
+    )
 
-    return random.choice(pool)
+
+# ============================================================
+# OLLAMA
+# ============================================================
+
+def _ollama(prompt):
+
+    response = requests.post(
+        OLLAMA_URL,
+        json={
+            "model": MODEL_NAME,
+            "prompt": prompt,
+            "stream": False,
+        },
+        timeout=OLLAMA_TIMEOUT,
+    )
+
+    response.raise_for_status()
+
+    return response.json()[
+        "response"
+    ].strip()
+
+
+# ============================================================
+# CLEAN SCRIPT
+# ============================================================
+
+def _clean_spoken_text(
+    result
+):
+
+    unwanted_prefixes = (
+        "narration:",
+        "script:",
+        "sound suggestion:",
+        "sound:",
+        "music suggestion:",
+        "music:",
+        "topic:",
+        "title:",
+    )
+
+    cleaned_lines = []
+
+    for line in result.splitlines():
+
+        clean = line.strip()
+
+        if not clean:
+            continue
+
+        lower = clean.lower()
+
+        if any(
+            lower.startswith(prefix)
+            for prefix
+            in unwanted_prefixes
+        ):
+            continue
+
+        if clean.startswith("#"):
+            continue
+
+        cleaned_lines.append(
+            clean
+        )
+
+    result = " ".join(
+        cleaned_lines
+    )
+
+    result = re.sub(
+        r"\s+",
+        " ",
+        result
+    ).strip()
+
+    result = re.sub(
+        r"[\[\]{}]",
+        "",
+        result
+    )
+
+    return result
 
 
 # ============================================================
@@ -122,140 +296,164 @@ def generate_script(topic):
 
     history = load_hook_history()
 
-    unwanted_prefixes = [
-        "narration:",
-        "script:",
-        "sound suggestion:",
-        "sound:",
-        "music suggestion:",
-        "music:",
-        "topic:",
-    ]
-
     last_error = None
+
     tried_styles = []
 
-    for attempt in range(1, OLLAMA_MAX_RETRIES + 1):
+    for attempt in range(
+        1,
+        OLLAMA_MAX_RETRIES + 1
+    ):
 
-        style_key, style_instruction = pick_hook_style(history, tried_styles)
-        tried_styles.append(style_key)
+        (
+            style_key,
+            style_instruction
+        ) = pick_hook_style(
+            history,
+            tried_styles
+        )
+
+        tried_styles.append(
+            style_key
+        )
 
         prompt = f"""
-        Create a YouTube Shorts narration.
+Create a high-retention YouTube Shorts narration.
 
-        Audience:
-        {AUDIENCE}
+Audience:
+{AUDIENCE}
 
-        Topic:
-        {topic}
+Topic:
+{topic}
 
-        Requirements:
+Target length:
 
-        - Length: approximately 100-120 words.
-        - Fun, exciting and educational.
-        - Simple English.
-        - The FIRST sentence must be a powerful hook that immediately
-        creates curiosity.
+70-105 spoken words.
 
-        HOOK STYLE FOR THIS SCRIPT (follow this exactly — do not use
-        any other opening style):
-        {style_instruction}
+Usually suitable for approximately 22-35 seconds.
 
-        Do NOT start with "Can you believe" or "Did you know" under
-        any circumstances.
+Required story structure:
 
-        - Do not waste the first few seconds introducing the topic.
-        - Reveal the interesting fact quickly.
-        - Keep the narration fast and engaging.
-        - End with a memorable fact or conclusion.
+1. HOOK
+One short sentence.
+Ideally under 10 words.
 
-        IMPORTANT:
+2. OPEN LOOP
+Create a reason to stay for the explanation.
 
-        Return ONLY spoken narration.
+3. FAST REVEAL
+Begin delivering useful information immediately.
 
-        DO NOT include:
-        - Title
-        - Topic heading
-        - Sound suggestions
-        - Sound effects
-        - Music suggestions
-        - Visual suggestions
-        - Scene descriptions
-        - Animation instructions
-        - Production notes
-        - Markdown
-        - Bullet points
-        - Labels such as "Narration:", "Sound:", "Topic:",
-        "Scene:", etc.
-        - Anything inside brackets or braces
+4. ESCALATION
+Introduce an even more surprising detail.
 
-        Return ONLY the narration.
-        """
+5. PAYOFF
+Put the strongest memorable fact near the end.
+
+6. END
+Finish with a thought, question, or line that can
+encourage comments, sharing, or a natural rewatch.
+
+Do not force a CTA.
+
+HOOK STYLE FOR THIS SCRIPT:
+
+{style_instruction}
+
+Writing rules:
+
+- Never start with "Did you know".
+- Never start with "Can you believe".
+- Never say "Today we're going to".
+- Never say "In this video".
+- Never say "Welcome".
+- No introduction.
+- No filler.
+- Use short conversational sentences.
+- Use simple English.
+- Prefer concrete numbers when accurate.
+- Prefer familiar comparisons when useful.
+- Do not reveal every interesting point in the first sentence.
+- Create curiosity between sentences.
+- Avoid exaggerated claims.
+- Avoid unsupported claims.
+- Every sentence should earn the next second of attention.
+
+When natural, make the final thought connect conceptually
+to the opening so the automatic Shorts loop feels smooth.
+
+Return ONLY spoken narration.
+
+Do not include:
+
+Title
+Labels
+Markdown
+Bullets
+Scene notes
+Sound notes
+Visual notes
+Production notes
+Brackets
+"""
 
         try:
 
-            response = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": MODEL_NAME,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=OLLAMA_TIMEOUT
+            result = (
+                _clean_spoken_text(
+                    _ollama(
+                        prompt
+                    )
+                )
             )
 
-            response.raise_for_status()
+            word_count = len(
+                result.split()
+            )
 
-            result = response.json()["response"].strip()
+            if word_count < 55:
 
-            # ------------------------------------------------
-            # Defensive cleanup
-            # ------------------------------------------------
-
-            lines = result.splitlines()
-
-            cleaned_lines = []
-
-            for line in lines:
-
-                clean = line.strip()
-
-                if not clean:
-                    continue
-
-                lower = clean.lower()
-
-                if any(
-                    lower.startswith(prefix)
-                    for prefix in unwanted_prefixes
-                ):
-                    continue
-
-                if clean.startswith("#"):
-                    continue
-
-                cleaned_lines.append(clean)
-
-            result = " ".join(cleaned_lines).strip()
-
-            if len(result.split()) < 20:
                 raise ValueError(
-                    "Generated script looks too short "
-                    f"({len(result.split())} words)."
+                    "Generated script "
+                    f"is too short "
+                    f"({word_count} words)."
                 )
 
-            opening = result.lower().strip()
+            if word_count > 125:
 
-            if any(opening.startswith(banned) for banned in BANNED_OPENERS):
                 raise ValueError(
-                    f"Script opened with a banned phrase despite "
-                    f"instructions (style attempted: {style_key})."
+                    "Generated script "
+                    f"is too long "
+                    f"({word_count} words)."
                 )
 
-            save_hook_history(history + [{
-                "style": style_key,
-                "topic": topic,
-            }])
+            opening = (
+                result
+                .lower()
+                .strip()
+            )
+
+            if any(
+                opening.startswith(
+                    banned
+                )
+                for banned
+                in BANNED_OPENERS
+            ):
+
+                raise ValueError(
+                    "Script used a banned "
+                    f"opener ({style_key})."
+                )
+
+            save_hook_history(
+                history
+                +
+                [{
+                    "style": style_key,
+                    "topic": topic,
+                }]
+            )
 
             return result
 
@@ -264,14 +462,175 @@ def generate_script(topic):
             last_error = exc
 
             print(
-                f"Script generation attempt {attempt} "
-                f"(style: {style_key}) failed: {exc}"
+                "Script generation "
+                f"attempt {attempt} "
+                f"({style_key}) failed: "
+                f"{exc}"
             )
 
-            if attempt < OLLAMA_MAX_RETRIES:
-                time.sleep(attempt * 2)
+            if (
+                attempt
+                < OLLAMA_MAX_RETRIES
+            ):
+
+                time.sleep(
+                    attempt * 2
+                )
 
     raise RuntimeError(
-        f"Unable to generate a script after {OLLAMA_MAX_RETRIES} "
-        f"attempts: {last_error}"
+        "Unable to generate script after "
+        f"{OLLAMA_MAX_RETRIES} attempts: "
+        f"{last_error}"
     )
+
+
+# ============================================================
+# SCRIPT REVIEW
+# ============================================================
+
+def review_script(
+    topic,
+    script
+):
+
+    prompt = f"""
+Review this educational YouTube Shorts narration.
+
+Topic:
+
+{topic}
+
+Narration:
+
+{script}
+
+Fix the narration ONLY when needed for:
+
+- obviously false claims
+- internally inconsistent claims
+- suspicious extreme numbers
+- misleading clickbait
+- weak first sentence
+- filler
+- repetition
+
+Preserve the high-retention style.
+
+Keep it approximately 70-105 words when possible.
+
+Do not add citations.
+Do not add labels.
+Do not add markdown.
+Do not add production notes.
+Do not add warnings.
+
+Return ONLY the improved spoken narration.
+"""
+
+    try:
+
+        reviewed = (
+            _clean_spoken_text(
+                _ollama(
+                    prompt
+                )
+            )
+        )
+
+        word_count = len(
+            reviewed.split()
+        )
+
+        if (
+            50
+            <= word_count
+            <= 125
+        ):
+
+            return reviewed
+
+    except Exception as exc:
+
+        print(
+            "Script review skipped "
+            f"because it failed: {exc}"
+        )
+
+    return script
+
+
+# ============================================================
+# GENERATE YOUTUBE TITLE
+# ============================================================
+
+def generate_title(
+    topic,
+    script
+):
+
+    prompt = f"""
+Create ONE clickable YouTube Shorts title.
+
+Topic:
+
+{topic}
+
+Narration:
+
+{script}
+
+Rules:
+
+- Prefer 35-55 characters.
+- Never exceed 70 characters.
+- Put the important idea near the beginning.
+- Create curiosity without misleading clickbait.
+- Make it instantly understandable.
+- Use at most one emoji.
+- Do not include #Shorts.
+- Do not use ALL CAPS except one emphasis word.
+- Do not end with a period.
+
+Return ONLY the title.
+"""
+
+    try:
+
+        title = (
+            _ollama(
+                prompt
+            )
+            .splitlines()[0]
+            .strip()
+        )
+
+        title = re.sub(
+            r"^(title\s*:\s*)",
+            "",
+            title,
+            flags=re.IGNORECASE
+        )
+
+        title = (
+            title
+            .strip('"')
+            .strip("'")
+            .strip()
+            .rstrip(".")
+        )
+
+        if title:
+
+            return title[
+                :70
+            ].rstrip()
+
+    except Exception as exc:
+
+        print(
+            "Title generation failed. "
+            "Using topic as title. "
+            f"{exc}"
+        )
+
+    return topic[:70]
