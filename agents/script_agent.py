@@ -292,6 +292,80 @@ def _clean_spoken_text(
 # GENERATE SCRIPT
 # ============================================================
 
+def shorten_script(
+    topic,
+    script,
+    max_words=105
+):
+    """
+    Shorten an otherwise valid script instead of failing
+    the complete generation process.
+    """
+
+    word_count = len(
+        script.split()
+    )
+
+    if word_count <= max_words:
+        return script
+
+    prompt = f"""
+Shorten the following YouTube Shorts narration.
+
+Topic:
+{topic}
+
+Narration:
+{script}
+
+Current length:
+{word_count} words
+
+Target:
+80-105 words.
+
+IMPORTANT:
+
+- Preserve the hook.
+- Preserve the strongest facts.
+- Preserve the payoff.
+- Remove filler and repetition.
+- Keep short conversational sentences.
+- Do not introduce new facts.
+- Do not add labels.
+- Do not add markdown.
+- Do not add production notes.
+
+Return ONLY the shortened spoken narration.
+"""
+
+    try:
+
+        shortened = _clean_spoken_text(
+            _ollama(
+                prompt
+            )
+        )
+
+        shortened_word_count = len(
+            shortened.split()
+        )
+
+        if shortened_word_count >= 55:
+
+            return shortened
+
+    except Exception as exc:
+
+        print(
+            "Automatic script shortening "
+            f"failed: {exc}"
+        )
+
+    # Do not crash the entire pipeline.
+    # Keep the original script as fallback.
+    return script
+
 def generate_script(topic):
 
     history = load_hook_history()
@@ -419,12 +493,27 @@ Brackets
                     f"({word_count} words)."
                 )
 
-            if word_count > 125:
+            if word_count > 105:
 
-                raise ValueError(
-                    "Generated script "
-                    f"is too long "
-                    f"({word_count} words)."
+                print(
+                    f"Generated script is "
+                    f"{word_count} words. "
+                    "Automatically shortening..."
+                )
+
+                result = shorten_script(
+                    topic,
+                    result,
+                    max_words=105
+                )
+
+                word_count = len(
+                    result.split()
+                )
+
+                print(
+                    f"Final script length: "
+                    f"{word_count} words."
                 )
 
             opening = (
@@ -541,11 +630,15 @@ Return ONLY the improved spoken narration.
             reviewed.split()
         )
 
-        if (
-            50
-            <= word_count
-            <= 125
-        ):
+        if word_count >= 50:
+
+            if word_count > 105:
+
+                reviewed = shorten_script(
+                    topic,
+                    reviewed,
+                    max_words=105
+                )
 
             return reviewed
 
