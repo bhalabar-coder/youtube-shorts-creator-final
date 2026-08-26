@@ -45,8 +45,6 @@ CAPTION_Y = int(
     VIDEO_HEIGHT * 0.72
 )
 
-OVERLAY_FONT_SIZE = 104
-
 CAPTION_MARGIN = 70
 
 PROGRESS_HEIGHT = 8
@@ -1319,141 +1317,6 @@ def build_scene_clips(
     return clips
 
 # ============================================================
-# PATTERN INTERRUPT OVERLAYS
-# ============================================================
-
-def create_scene_overlays(
-    clips,
-    media_files,
-    scenes
-):
-
-    overlays = []
-
-    start_time = 0.0
-
-    for index, clip in enumerate(
-        clips
-    ):
-
-        media = (
-            media_files[index]
-            if index
-            < len(media_files)
-            else {}
-        )
-
-        scene_index = (
-            media.get(
-                "scene_index",
-                index
-            )
-        )
-
-        if (
-            0
-            <= scene_index
-            < len(scenes)
-        ):
-
-            overlay_text = str(
-                scenes[
-                    scene_index
-                ].get(
-                    "overlay"
-                )
-                or ""
-            ).strip()
-
-        else:
-
-            overlay_text = ""
-
-        if overlay_text:
-
-            try:
-
-                overlay_duration = min(
-                    0.80,
-                    max(
-                        0.45,
-                        clip.duration
-                        * 0.35
-                    )
-                )
-
-                overlay = TextClip(
-
-                    text=
-                        overlay_text.upper(),
-
-                    font_size=
-                        OVERLAY_FONT_SIZE,
-
-                    color=
-                        "white",
-
-                    stroke_color=
-                        "black",
-
-                    stroke_width=
-                        6,
-
-                    method=
-                        "caption",
-
-                    size=(
-                        VIDEO_WIDTH - 140,
-                        280
-                    ),
-
-                    text_align=
-                        "center",
-                )
-
-                overlay = (
-
-                    overlay
-
-                    .with_start(
-                        start_time
-                        + 0.05
-                    )
-
-                    .with_duration(
-                        overlay_duration
-                    )
-
-                    .with_position(
-                        (
-                            "center",
-                            int(
-                                VIDEO_HEIGHT
-                                * 0.32
-                            )
-                        )
-                    )
-                )
-
-                overlays.append(
-                    overlay
-                )
-
-            except Exception as exc:
-
-                print(
-                    "Scene overlay "
-                    "creation failed: "
-                    f"{exc}"
-                )
-
-        start_time += (
-            clip.duration
-        )
-
-    return overlays
-
-# ============================================================
 # ADD TRANSITIONS
 # ============================================================
 
@@ -1595,21 +1458,9 @@ def build_video(
     # Composite
     # --------------------------------------------------------
 
-    pattern_layers = (
-        create_scene_overlays(
-            clips,
-            media_files,
-            scenes
-        )
-    )
-
     layers = [
         video
     ]
-
-    layers.extend(
-        pattern_layers
-    )
 
     layers.extend(
         caption_layers

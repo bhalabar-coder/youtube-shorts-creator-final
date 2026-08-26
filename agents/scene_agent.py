@@ -56,10 +56,7 @@ SCENE_SCHEMA = {
 
                 "enum": ANIMATIONS,
             },
-
-            "overlay": {
-                "type": "string"
-            },
+            
         },
 
         "required": [
@@ -67,7 +64,6 @@ SCENE_SCHEMA = {
             "text",
             "search",
             "animation",
-            "overlay",
         ],
     },
 }
@@ -186,9 +182,6 @@ def split_narration_into_scenes(
                     index
                     % len(ANIMATIONS)
                 ],
-
-            "overlay":
-                "",
         })
 
     return scenes
@@ -244,14 +237,6 @@ def _validate_scenes(
             ) or ""
         ).strip()
 
-        scene[
-            "overlay"
-        ] = str(
-            scene.get(
-                "overlay"
-            ) or ""
-        ).strip()
-
         animation = (
             scene.get(
                 "animation"
@@ -294,24 +279,6 @@ def _validate_scenes(
         seen_queries.add(
             normalized_query
         )
-
-        # Overlay should remain short.
-        if (
-            len(
-                scene[
-                    "overlay"
-                ].split()
-            )
-            > 4
-        ):
-
-            scene[
-                "overlay"
-            ] = " ".join(
-                scene[
-                    "overlay"
-                ].split()[:4]
-            )
 
     return scenes
 
@@ -389,27 +356,7 @@ lightning storm slow motion
 
 OVERLAY FIELD:
 
-The "overlay" field is an OPTIONAL
-1-4 word pattern interrupt.
-
-Use it on approximately 2-3 scenes only.
-
-Prefer:
-- Scene 1
-- Important reveal
-- Biggest surprise
-
-Examples:
-
-3 HEARTS?!
-BUT WHY?
-1,000X BIGGER
-THIS IS REAL
-IMPOSSIBLE?
-
 Do not simply repeat the narration.
-
-For scenes without overlay return an empty string.
 
 Animation options:
 
