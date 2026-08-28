@@ -283,47 +283,6 @@ TOPIC_CATEGORIES = [
     "mysterious unsolved phenomena",
     "unusual weather events",
     "strange but true science facts",
-
-    # Indian history & empires
-    "ancient Indian history",
-    "the Indus Valley Civilization",
-    "the Golden Age of the Guptas",
-    "the Maurya Empire and Ashoka the Great",
-    "the Maratha Empire and Chhatrapati Shivaji Maharaj",
-    "the Mughal Empire and its architecture",
-    "the Chola Dynasty and their naval power",
-    "the Vijayanagara Empire and Hampi",
-    "the Rajput kingdoms and their forts",
-    "the freedom struggle and independence movement",
- 
-    # Itihasa: Ramayana & Mahabharata
-    "the Mahabharata and its core life lessons",
-    "the Ramayana and the journey of Rama",
-    "the Bhagavad Gita and its philosophy",
-    "the legendary weapons and astras of ancient epics",
-    "the architectural marvel of Ram Setu",
-    "the strategy behind the Kurukshetra war formations",
-    "famous friendships and rivalries in Indian epics",
-    "the curse and boons that shaped epic timelines",
- 
-    # Indian mythology & puranas
-    "the Holy Trinity: Brahma, Vishnu, and Shiva",
-    "the Dashavatara: ten incarnations of Lord Vishnu",
-    "the concept of Karma and Dharma",
-    "the stories of the Puranas",
-    "Vedic cosmic structure and the 14 worlds",
-    "sacred rivers of India and their myths",
-    "demons, asuras, and devas in Hindu lore",
-    "vahanas: the divine animal vehicles of gods",
- 
-    # Ancient Indian science & culture
-    "ancient Indian universities like Nalanda and Takshashila",
-    "the origins of Yoga and Ayurveda",
-    "ancient Indian astronomy and Aryabhata",
-    "the invention of zero and ancient Indian mathematics",
-    "traditional Indian dance forms and their stories",
-    "the architecture of ancient rock-cut temples",
-    "the history of Indian textiles and the Silk Route connection",
 ]
 
 # How many recent topics to remember so we can steer the model away
