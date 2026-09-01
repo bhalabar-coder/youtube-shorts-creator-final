@@ -2,9 +2,9 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    # 06:00 AM IST = 00:30 UTC
-    # 06:00 PM IST = 12:30 UTC
-    - cron: "30 0,12 * * *" 
+    # 04:00 AM IST = 22:30 UTC (Previous Day)
+    # 04:00 PM IST = 10:30 UTC
+    - cron: "30 10,22 * * *"    
   workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
 
 permissions:
