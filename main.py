@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import random
 import re
 import shutil
 
@@ -14,7 +15,7 @@ from agents.media_agent import download_scene_media
 from agents.voice_agent import generate_voice
 from agents.caption_agent import create_captions
 from agents.video_agent import build_video
-from agents.youtube_agent import upload_video
+from agents.youtube_agent import upload_video, post_first_comment
 
 from config import (
     OUTPUT_AUDIO,
@@ -65,6 +66,104 @@ def clean_youtube_description(text):
     return text.strip()
 
 
+# A few CTA variants so every single description doesn't read
+# identically — rotated at random per upload.
+DESCRIPTION_CTAS = [
+    "\U0001F4AC Drop a comment — what surprised you most?",
+    "\U0001F4AC Comment your favorite fact from this one!",
+    "\U0001F914 Did you already know this? Let us know below.",
+]
+
+FOLLOW_CTA = "\U0001F514 Follow for a new fact every day."
+
+
+def build_hashtags(
+    topic,
+    category
+):
+    """
+    #Shorts is the single most important tag for landing in the
+    Shorts feed, followed by a couple of topic-specific hashtags for
+    search/discovery. Built from the category so it stays relevant
+    across all ~90+ TOPIC_CATEGORIES without needing a manual mapping.
+    """
+
+    words = re.findall(
+        r"[a-zA-Z']+",
+        category
+    )
+
+    topic_tags = []
+
+    for word in words:
+
+        word = word.lower()
+
+        if len(word) < 4 or word in ("and", "the"):
+            continue
+
+        tag = "#" + word.capitalize()
+
+        if tag not in topic_tags:
+            topic_tags.append(tag)
+
+    hashtags = (
+        ["#Shorts"]
+        + topic_tags[:3]
+        + ["#DidYouKnow", "#Facts"]
+    )
+
+    # dedupe while preserving order
+    seen = set()
+    deduped = []
+
+    for tag in hashtags:
+        if tag.lower() not in seen:
+            seen.add(tag.lower())
+            deduped.append(tag)
+
+    return " ".join(deduped[:6])
+
+
+def build_full_description(
+    script,
+    topic,
+    category
+):
+
+    body = clean_youtube_description(script)
+
+    hashtags = build_hashtags(topic, category)
+
+    cta = random.choice(DESCRIPTION_CTAS)
+
+    parts = [
+        part
+        for part in (body, hashtags, f"{cta}\n{FOLLOW_CTA}")
+        if part
+    ]
+
+    return "\n\n".join(parts).strip()[:5000]
+
+
+def build_first_comment(
+    topic
+):
+    """
+    Posted immediately after upload to seed engagement before real
+    viewers arrive. Kept as a simple template (no LLM call) so it
+    never becomes a point of failure in the pipeline.
+    """
+
+    templates = [
+        f"What's the wildest thing you know about {topic}? \U0001F447",
+        "Which part surprised you most — timestamp it below! \U0001F440",
+        f"Rate this {topic} fact 1-10 in the comments \U0001F447",
+    ]
+
+    return random.choice(templates)
+
+
 def build_tags(
     topic,
     category
@@ -97,8 +196,11 @@ def build_tags(
         unique[:8]
         +
         [
+            "shorts",
             "educational shorts",
             "interesting facts",
+            "did you know",
+            category.lower(),
         ]
     )
 
@@ -241,9 +343,11 @@ def main():
 
         print("\n[8/8] Uploading to YouTube...")
 
-        clean_description = (
-            clean_youtube_description(
-                script
+        full_description = (
+            build_full_description(
+                script,
+                topic,
+                category,
             )
         )
 
@@ -264,11 +368,16 @@ def main():
             f"{youtube_title}"
         )
 
-        upload_video(
+        response = upload_video(
             OUTPUT_VIDEO,
             title=youtube_title,
-            description=clean_description,
+            description=full_description,
             tags=tags,
+        )
+
+        post_first_comment(
+            response["id"],
+            build_first_comment(topic),
         )
 
     # ========================================================

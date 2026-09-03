@@ -15,7 +15,12 @@ from config import (
 )
 
 SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload"
+    "https://www.googleapis.com/auth/youtube.upload",
+    # force-ssl is required to post the auto first-comment below.
+    # NOTE: if you already have a cached credentials/token.json from
+    # before this change, delete it and re-run setup_youtube_auth.py
+    # once so the token picks up this new scope.
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 
@@ -111,3 +116,68 @@ def upload_video(
     print(f"Video uploaded: https://youtu.be/{response['id']}")
 
     return response
+
+
+# ============================================================
+# FIRST COMMENT (engagement seeding)
+# ============================================================
+#
+# Posting a comment right after upload — ideally a question tied to
+# the hook — is one of the cheapest ways to prime the comment section
+# before real viewers arrive. Best-effort: if the channel has comments
+# restricted, held for review, or the API call fails for any reason,
+# this must NOT take down an otherwise-successful upload.
+
+def post_first_comment(
+    video_id,
+    comment_text,
+):
+
+    if not comment_text:
+        return None
+
+    try:
+
+        credentials = get_credentials()
+
+        youtube = build(
+            "youtube",
+            "v3",
+            credentials=credentials
+        )
+
+        body = {
+            "snippet": {
+                "videoId": video_id,
+                "topLevelComment": {
+                    "snippet": {
+                        "textOriginal": comment_text[:9999],
+                    }
+                },
+            }
+        }
+
+        response = (
+            youtube.commentThreads()
+            .insert(
+                part="snippet",
+                body=body,
+            )
+            .execute()
+        )
+
+        print(f"Posted first comment: \"{comment_text}\"")
+
+        return response
+
+    except Exception as exc:
+
+        # Common causes: comments disabled/held for review on new
+        # channels, or a cached token that predates the force-ssl
+        # scope above. Never let this break the pipeline.
+        print(
+            "Could not post first comment "
+            f"(non-fatal): {exc}"
+        )
+
+        return None
