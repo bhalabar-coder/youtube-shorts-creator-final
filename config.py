@@ -387,6 +387,7 @@ MUSIC_DIR = "assets/music"
 SFX_DIR = "assets/sfx"
 CLIPS_DIR = "output/clips"
 TEMP_DIR = "output/temp"
+CONFIG_DIR = "video-performance-history/"
 
 
 # ============================================================
@@ -411,6 +412,7 @@ def ensure_output_dirs():
         TEMP_DIR,
         MUSIC_DIR,
         SFX_DIR,
+        CONFIG_DIR
     ]
 
     for path in paths:
