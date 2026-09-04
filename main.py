@@ -9,8 +9,12 @@ from agents.script_agent import (
     generate_script,
     review_script,
     generate_title,
+    break_script_into_scenes,
 )
-from agents.scene_agent import generate_scene_plan
+from agents.scene_agent import (
+    generate_scene_plan,
+    generate_scene_plan_with_sync,
+)
 from agents.media_agent import download_scene_media
 from agents.voice_agent import generate_voice
 from agents.caption_agent import create_captions
@@ -279,12 +283,34 @@ def main():
     print(f"\nSCRIPT:\n{script}")
 
     # ========================================================
-    # SCENE PLAN
+    # NARRATION BREAKDOWN FOR VISUAL SYNC
     # ========================================================
 
-    print("\n[3/8] Creating scene plan...")
+    print("\n[2.5/8] Breaking narration into visual moments...")
 
-    scenes = generate_scene_plan(topic, script)
+    narration_moments = break_script_into_scenes(
+        script
+    )
+
+    print(f"Narration split into {len(narration_moments)} visual moments:")
+    for moment in narration_moments:
+        print(
+            f"\n  Moment {moment['moment']}: "
+            f"\"{moment['narration'][:60]}...\""
+        )
+        print(f"    Search: {moment['search_query']}")
+
+    # ========================================================
+    # SCENE PLAN (NOW SYNCED TO NARRATION)
+    # ========================================================
+
+    print("\n[3/8] Creating scene plan (synced to narration)...")
+
+    scenes = generate_scene_plan_with_sync(
+        topic,
+        script,
+        narration_moments
+    )
 
     print(f"Created {len(scenes)} scenes.")
 

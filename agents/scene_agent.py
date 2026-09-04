@@ -287,6 +287,164 @@ def _validate_scenes(
 # GENERATE SCENES
 # ============================================================
 
+def generate_scene_plan_with_sync(
+    topic,
+    script,
+    narration_moments
+):
+    """
+    Generate a scene plan that's tightly synced to the narration.
+    Uses extracted keywords from each narration moment to guide
+    the visual search queries, ensuring visuals match what's spoken.
+    
+    narration_moments is output from script_agent.break_script_into_scenes()
+    """
+    
+    # Build a detailed breakdown that LLM can use
+    moments_text = "\n".join([
+        f"Moment {m['moment']}: \"{m['narration']}\"\n"
+        f"  Visual keywords: {', '.join(m['keywords'])}"
+        for m in narration_moments
+    ])
+    
+    prompt = f"""
+You are creating a high-retention visual storyboard
+for a viral educational YouTube Short.
+
+Topic:
+
+{topic}
+
+Narration:
+
+{script}
+
+NARRATION BREAKDOWN (each moment tells you WHAT TO SHOW):
+
+{moments_text}
+
+Your task: Generate exactly {SCENE_COUNT} scenes that match these
+narration moments precisely. Use the visual keywords as your guide
+for what to search for.
+
+CRITICAL: Each scene must directly visualize what's being said at
+that moment. No mismatches.
+
+Break the narration into exactly {SCENE_COUNT} fast-paced visual scenes.
+
+Keep narration order.
+
+VISUAL RULES:
+
+- Scene 1 must visually reinforce the hook immediately.
+- Change visuals frequently.
+- Every scene must be meaningfully different.
+- Prefer real subjects.
+- Prefer movement.
+- Prefer close-ups.
+- Prefer scale comparisons.
+- Prefer unusual perspectives.
+- Prefer transformations.
+- Prefer dramatic real footage.
+- Avoid generic stock-footage ideas.
+
+Consecutive scenes should change at least one:
+
+- subject
+- scale
+- environment
+- perspective
+- comparison object
+
+SEARCH FIELD:
+
+The "search" field must:
+
+- contain 2-5 words
+- describe a REAL photographable subject
+- work as a Pexels or Pixabay search query
+- be unique for every scene
+- directly match the visual keywords for that narration moment
+
+Bad searches:
+
+interesting science
+amazing nature
+space concept
+
+Good searches:
+
+octopus underwater closeup
+volcano lava eruption
+astronaut earth window
+giant blue whale underwater
+lightning storm slow motion
+
+ANIMATION FIELD:
+
+Do not simply repeat the narration.
+
+Animation options:
+
+zoom_in
+zoom_out
+pan_left
+pan_right
+static
+
+Return ONLY valid JSON array with exactly {SCENE_COUNT} objects.
+"""
+    
+    last_error = None
+    
+    for attempt in range(
+        1,
+        OLLAMA_MAX_RETRIES + 1
+    ):
+        
+        try:
+            
+            response = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": MODEL_NAME,
+                    "prompt": prompt,
+                    "stream": False,
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            
+            response.raise_for_status()
+            
+            result = response.json()["response"]
+            
+            scenes = extract_json(result)
+            
+            _validate_scenes(scenes)
+            
+            return scenes
+        
+        except Exception as exc:
+            
+            last_error = exc
+            
+            print(
+                f"Scene plan generation "
+                f"(synced) attempt {attempt} "
+                f"failed: {exc}"
+            )
+            
+            if attempt < OLLAMA_MAX_RETRIES:
+                time.sleep(attempt * 2)
+    
+    raise RuntimeError(
+        f"Unable to generate synced "
+        f"scene plan after "
+        f"{OLLAMA_MAX_RETRIES} attempts: "
+        f"{last_error}"
+    )
+
+
 def generate_scene_plan(
     topic,
     script

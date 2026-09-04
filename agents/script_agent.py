@@ -653,6 +653,149 @@ Return ONLY the improved spoken narration.
 
 
 # ============================================================
+# NARRATION BREAKDOWN FOR VISUAL SYNC
+# ============================================================
+# 
+# Break the script into visual moments with extracted keywords.
+# Each moment should correspond to one scene in the video so
+# visuals match exactly what's being narrated.
+
+def extract_visual_keywords(
+    narration_chunk
+):
+    """
+    Extract nouns, verbs, and key phrases from a narration chunk
+    that describe what SHOULD be shown visually. Removes filler words.
+    Returns a list of search-friendly keywords.
+    """
+    
+    # Remove common filler/connecting words
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "because", "that",
+        "this", "it", "is", "are", "was", "were", "be", "been",
+        "have", "has", "had", "do", "does", "did", "will", "would",
+        "could", "should", "may", "might", "must", "can", "to",
+        "in", "on", "at", "by", "for", "with", "from", "of", "about",
+        "as", "if", "when", "where", "why", "how", "very", "so",
+        "just", "also", "even", "only", "such", "no", "not", "more",
+        "most", "some", "any", "all", "each", "every", "both",
+    }
+    
+    # Extract words that are likely nouns/visual elements
+    words = re.findall(
+        r"\b[a-z]+(?:'[a-z]+)?\b",
+        narration_chunk.lower()
+    )
+    
+    # Filter: keep words that are 4+ chars and not stopwords
+    keywords = [
+        w for w in words
+        if len(w) >= 3 and w not in stopwords
+    ]
+    
+    # Dedupe while preserving order
+    seen = set()
+    unique = []
+    for kw in keywords:
+        if kw not in seen:
+            seen.add(kw)
+            unique.append(kw)
+    
+    return unique[:5]  # Return top 5 keywords
+
+
+def break_script_into_scenes(
+    script
+):
+    """
+    Split the script into 9 visual moments, each tied to specific
+    narration. Extract keywords from each moment that describe what
+    should be shown visually.
+    
+    Returns list of dicts: {
+        "moment": 1,
+        "narration": "Exact words being spoken",
+        "keywords": ["keyword1", "keyword2", ...],
+        "search_query": "keyword1 keyword2 keyword3"
+    }
+    """
+    
+    # Split by sentences to get coherent narration chunks
+    sentences = [
+        s.strip()
+        for s in re.split(
+            r"(?<=[.!?])\s+",
+            script.strip()
+        )
+        if s.strip()
+    ]
+    
+    if not sentences:
+        sentences = [script.strip()]
+    
+    # Group sentences into ~9 visual moments (some moments might
+    # be 1 sentence, some might be 2-3 if needed to fill 9 moments)
+    target_moments = 9
+    moment_size = max(
+        1,
+        len(sentences) // target_moments
+    )
+    
+    moments = []
+    current_moment = 1
+    
+    for i in range(
+        0,
+        len(sentences),
+        moment_size
+    ):
+        
+        # Get the next 1-2 sentences for this moment
+        chunk_sentences = sentences[
+            i : i + moment_size + 1
+        ]
+        
+        narration = " ".join(chunk_sentences)
+        
+        # Extract visual keywords from this specific narration
+        keywords = extract_visual_keywords(
+            narration
+        )
+        
+        # Build a search query from the keywords
+        search_query = " ".join(keywords)
+        
+        if not search_query:
+            # Fallback: use first word if no keywords found
+            words = narration.split()
+            search_query = words[0] if words else ""
+        
+        moments.append({
+            "moment": current_moment,
+            "narration": narration,
+            "keywords": keywords,
+            "search_query": search_query,
+        })
+        
+        current_moment += 1
+    
+    # Ensure we have exactly 9 moments by adjusting
+    if len(moments) < 9:
+        # Duplicate the last moment if we don't have enough
+        while len(moments) < 9:
+            last = moments[-1].copy()
+            last["moment"] = len(moments) + 1
+            moments.append(last)
+    elif len(moments) > 9:
+        # Merge extra moments into the last ones
+        moments = moments[:9]
+        for i, m in enumerate(moments):
+            m["moment"] = i + 1
+    
+    return moments
+
+
+# ============================================================
 # GENERATE YOUTUBE TITLE
 # ============================================================
 
