@@ -17,6 +17,12 @@ from config import (
     TOPIC_HISTORY_FILE,
 )
 
+try:
+    from agents.analytics_agent import get_performance_stats
+except ImportError:
+    # Analytics not available yet (fresh install)
+    get_performance_stats = None
+
 
 TOPIC_CANDIDATE_COUNT = 5
 
@@ -90,6 +96,14 @@ def add_to_history(
 # ============================================================
 
 def pick_category(history):
+    """
+    Pick a category, preferring ones with good performance history.
+    
+    Strategy:
+    1. Never pick a category used in the last 6 videos (variety)
+    2. If analytics available, weight by performance
+    3. Fallback to random if no analytics
+    """
 
     recent_categories = [
         entry.get("category")
@@ -103,10 +117,69 @@ def pick_category(history):
         if category not in recent_categories
     ]
 
+    candidates = (
+        fresh if fresh else TOPIC_CATEGORIES
+    )
+
+    # Try to use performance data if available
+    if get_performance_stats:
+        
+        try:
+            
+            stats = get_performance_stats()
+            
+            if stats and stats.get("by_category"):
+                
+                # Weight by average views per category
+                weights = {}
+                
+                for category in candidates:
+                    
+                    if category in stats["by_category"]:
+                        
+                        cat_data = (
+                            stats["by_category"][category]
+                        )
+                        
+                        count = cat_data.get("count", 0)
+                        
+                        if count > 0:
+                            
+                            avg_views = (
+                                cat_data["views"] / count
+                            )
+                            
+                            weights[category] = (
+                                avg_views
+                            )
+                    
+                    else:
+                        # Categories with no data
+                        # yet get neutral weight
+                        weights[category] = 100
+                
+                # Random choice weighted by views
+                if weights:
+                    
+                    return random.choices(
+                        list(weights.keys()),
+                        weights=list(
+                            weights.values()
+                        ),
+                        k=1
+                    )[0]
+        
+        except Exception as e:
+            
+            # Analytics failed, fall back to random
+            print(
+                f"Could not use performance "
+                f"weighting: {e}"
+            )
+
+    # Fallback: random choice
     return random.choice(
-        fresh
-        if fresh
-        else TOPIC_CATEGORIES
+        candidates
     )
 
 

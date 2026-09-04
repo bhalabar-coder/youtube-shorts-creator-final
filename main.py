@@ -20,6 +20,7 @@ from agents.voice_agent import generate_voice
 from agents.caption_agent import create_captions
 from agents.video_agent import build_video
 from agents.youtube_agent import upload_video, post_first_comment
+from agents.analytics_agent import add_to_performance_history
 
 from config import (
     OUTPUT_AUDIO,
@@ -273,7 +274,7 @@ def main():
 
     print("\n[2/8] Generating script...")
 
-    script = generate_script(topic)
+    script, hook_style = generate_script(topic)
 
     script = review_script(
         topic,
@@ -281,6 +282,7 @@ def main():
     )
 
     print(f"\nSCRIPT:\n{script}")
+    print(f"Hook style used: {hook_style}")
 
     # ========================================================
     # NARRATION BREAKDOWN FOR VISUAL SYNC
@@ -404,6 +406,30 @@ def main():
         post_first_comment(
             response["id"],
             build_first_comment(topic),
+        )
+
+        # ================================================
+        # TRACK VIDEO PERFORMANCE
+        # ================================================
+        # Store metadata for future analytics:
+        # topic, category, hook_style, etc.
+        # This allows us to correlate performance with
+        # content choices later.
+
+        video_id = response["id"]
+        narration_length = len(script.split())
+
+        add_to_performance_history(
+            video_id,
+            youtube_title,
+            topic,
+            category,
+            hook_style,
+            narration_length,
+        )
+
+        print(
+            f"\n✓ Video tracked for analytics: {video_id}"
         )
 
     # ========================================================

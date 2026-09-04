@@ -23,6 +23,142 @@ ANIMATIONS = [
     "static",
 ]
 
+# ============================================================
+# SEARCH TERM CONFLICT DETECTION
+# ============================================================
+# Prevent showing shallow coral reefs when narrating deep sea,
+# or vice versa. Catches misalignments before they happen.
+
+SEARCH_CONFLICTS = {
+    # If narration contains these keywords, AVOID these search terms
+    "deep": {
+        "avoid": [
+            "coral reef", "shallow", "tropical", "sunlit", "clear water",
+            "bright fish", "colorful reef", "surface", "snorkel"
+        ],
+        "prefer": [
+            "deep sea", "bioluminescence", "anglerfish", "lanternfish",
+            "trench", "abyss", "pressure", "dark ocean", "hydrothermal"
+        ]
+    },
+    "shallow": {
+        "avoid": [
+            "trench", "abyss", "deep", "bioluminescence", "dark ocean",
+            "pressure", "hydrothermal", "anglerfish"
+        ],
+        "prefer": [
+            "coral reef", "tropical", "colorful", "sunlit", "clear water",
+            "surface", "reef fish"
+        ]
+    },
+    "dark": {
+        "avoid": [
+            "bright", "sunlit", "colorful", "tropical", "clear", "sunny"
+        ],
+        "prefer": [
+            "dark", "night", "bioluminescence", "glowing", "shadows"
+        ]
+    },
+    "glow": {
+        "avoid": [
+            "coral reef", "shallow", "tropical", "sunlit", "daytime"
+        ],
+        "prefer": [
+            "bioluminescence", "glowing", "deep sea", "dark", "night"
+        ]
+    },
+    "cold": {
+        "avoid": [
+            "tropical", "warm", "reef", "colorful", "sunlit"
+        ],
+        "prefer": [
+            "arctic", "ice", "glacier", "polar", "snow"
+        ]
+    },
+    "arctic": {
+        "avoid": [
+            "tropical", "warm", "reef", "desert", "hot"
+        ],
+        "prefer": [
+            "arctic", "ice", "glacier", "polar", "snow", "penguin", "seal"
+        ]
+    },
+}
+
+def check_search_conflicts(
+    narration,
+    search_query
+):
+    """
+    Validate that a search query doesn't contradict the narration.
+    Returns (is_valid, message, suggested_fixes)
+    """
+    
+    narration_lower = narration.lower()
+    search_lower = search_query.lower()
+    
+    conflicts_found = []
+    suggested_improvements = []
+    
+    for keyword, rules in SEARCH_CONFLICTS.items():
+        
+        if keyword not in narration_lower:
+            continue
+        
+        # Check if search contains any "avoid" terms
+        for avoid_term in rules["avoid"]:
+            if avoid_term in search_lower:
+                conflicts_found.append(
+                    f"Narration mentions '{keyword}' "
+                    f"but search includes '{avoid_term}'"
+                )
+        
+        # If we found conflicts, suggest improvements
+        if conflicts_found:
+            for prefer_term in rules["prefer"]:
+                if prefer_term not in search_lower:
+                    suggested_improvements.append(
+                        f"Add '{prefer_term}' to search"
+                    )
+    
+    if conflicts_found:
+        return False, "; ".join(conflicts_found), suggested_improvements
+    
+    return True, "OK", []
+
+
+def fix_search_query(
+    narration,
+    original_search
+):
+    """
+    Auto-fix a search query to align with narration.
+    Adds preferred terms and removes conflicting ones.
+    """
+    
+    narration_lower = narration.lower()
+    fixed = original_search.lower()
+    
+    for keyword, rules in SEARCH_CONFLICTS.items():
+        
+        if keyword not in narration_lower:
+            continue
+        
+        # Remove conflicting terms
+        for avoid_term in rules["avoid"]:
+            fixed = fixed.replace(avoid_term, "").strip()
+        
+        # Add preferred terms if missing
+        for prefer_term in rules["prefer"]:
+            if prefer_term not in fixed:
+                fixed = f"{prefer_term} {fixed}".strip()
+                break  # Only add one preferred term to keep it concise
+    
+    # Clean up excessive whitespace
+    fixed = " ".join(fixed.split())[:100]  # Cap at 100 chars
+    
+    return fixed if fixed else original_search
+
 
 SCENE_SCHEMA = {
 
@@ -192,7 +328,8 @@ def split_narration_into_scenes(
 # ============================================================
 
 def _validate_scenes(
-    scenes
+    scenes,
+    narration_moments=None
 ):
 
     if (
@@ -236,6 +373,42 @@ def _validate_scenes(
                 "search"
             ) or ""
         ).strip()
+
+        # CONFLICT DETECTION: Validate search against narration
+        if narration_moments:
+            
+            moment = narration_moments[
+                min(index - 1, len(narration_moments) - 1)
+            ]
+            
+            narration = moment.get("narration", "")
+            
+            is_valid, msg, suggestions = (
+                check_search_conflicts(
+                    narration,
+                    scene["search"]
+                )
+            )
+            
+            if not is_valid:
+                
+                print(
+                    f"⚠️  Scene {index} search conflict: "
+                    f"{msg}"
+                )
+                
+                # Auto-fix the search
+                fixed = fix_search_query(
+                    narration,
+                    scene["search"]
+                )
+                
+                print(
+                    f"   Fixed: '{scene['search']}' "
+                    f"→ '{fixed}'"
+                )
+                
+                scene["search"] = fixed
 
         animation = (
             scene.get(
@@ -420,7 +593,10 @@ Return ONLY valid JSON array with exactly {SCENE_COUNT} objects.
             
             scenes = extract_json(result)
             
-            _validate_scenes(scenes)
+            _validate_scenes(
+                scenes,
+                narration_moments=narration_moments
+            )
             
             return scenes
         

@@ -544,7 +544,9 @@ Brackets
                 }]
             )
 
-            return result
+            # Return both script and hook style used
+            # (caller can unpack: script, hook_style = generate_script(...))
+            return result, style_key
 
         except Exception as exc:
 
