@@ -210,48 +210,88 @@ SCENE_SCHEMA = {
 # ============================================================
 
 def extract_json(text):
+    """
+    Parse a JSON scene array from an Ollama response.
 
-    text = re.sub(
-        r"```json",
-        "",
-        text
-    )
+    Supports:
+    - a raw JSON array
+    - JSON inside ```json fences
+    - a wrapped object such as {"scenes": [...]}
+    - extra text before/after the JSON array
+    """
 
-    text = re.sub(
-        r"```",
-        "",
-        text
-    ).strip()
+    if text is None:
+        raise ValueError("Empty model response.")
 
-    start = text.find(
-        "["
-    )
+    if isinstance(text, list):
+        return text
 
-    end = text.rfind(
-        "]"
-    )
+    if isinstance(text, dict):
+        if isinstance(text.get("scenes"), list):
+            return text["scenes"]
+        raise ValueError("Model response JSON object does not contain a scenes array.")
 
-    if (
-        start != -1
-        and end != -1
-        and end > start
-    ):
+    text = str(text).strip()
 
-        try:
+    # Remove markdown code fences if the model ignored the structured-output request.
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text).strip()
 
-            return json.loads(
-                text[
-                    start:end + 1
-                ]
-            )
+    # First try parsing the complete response.
+    try:
+        parsed = json.loads(text)
 
-        except json.JSONDecodeError:
+        if isinstance(parsed, list):
+            return parsed
 
-            pass
+        if isinstance(parsed, dict) and isinstance(parsed.get("scenes"), list):
+            return parsed["scenes"]
+
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: locate the first balanced JSON array.
+    array_start = text.find("[")
+
+    if array_start != -1:
+        depth = 0
+        in_string = False
+        escape = False
+
+        for index in range(array_start, len(text)):
+            char = text[index]
+
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+
+            if char == '"':
+                in_string = True
+            elif char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+
+                if depth == 0:
+                    candidate = text[array_start:index + 1]
+
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, list):
+                            return parsed
+                    except json.JSONDecodeError:
+                        break
+
+    preview = text[:500].replace("\n", " ")
 
     raise ValueError(
-        "No JSON array found "
-        "in model response."
+        "No valid JSON scene array found in model response. "
+        f"Response preview: {preview}"
     )
 
 
@@ -466,181 +506,164 @@ def generate_scene_plan_with_sync(
     narration_moments
 ):
     """
-    Generate a scene plan that's tightly synced to the narration.
-    Uses extracted keywords from each narration moment to guide
-    the visual search queries, ensuring visuals match what's spoken.
-    
-    narration_moments is output from script_agent.break_script_into_scenes()
+    Generate exactly SCENE_COUNT visual scenes synchronized to narration.
+
+    Uses Ollama structured output so the response is always requested
+    as a JSON array matching SCENE_SCHEMA. If all model attempts fail,
+    the workflow falls back to deterministic scene generation instead
+    of terminating the whole video workflow.
     """
-    
-    # Build a detailed breakdown that LLM can use
+
     moments_text = "\n".join([
         (
             f"Moment {m['moment']}:\n"
-            f"Narration: \"{m['narration']}\"\n"
+            f"Narration: {m['narration']}\n"
             f"Keywords: {', '.join(m['keywords'])}\n"
             f"Base stock search: {m['search_query']}"
         )
         for m in narration_moments
     ])
-    
+
     prompt = f"""
-You are creating a high-retention visual storyboard
-for a viral educational YouTube Short.
+You are creating a high-retention visual storyboard for a viral
+educational YouTube Short.
 
-Topic:
-
+TOPIC:
 {topic}
 
-Narration:
-
+FULL NARRATION:
 {script}
 
-NARRATION BREAKDOWN (each moment tells you WHAT TO SHOW):
-
+NARRATION MOMENTS:
 {moments_text}
 
-Your task: Generate exactly {SCENE_COUNT} scenes that match these
-narration moments precisely. Use the visual keywords as your guide
-for what to search for.
+Create exactly {SCENE_COUNT} scenes in the same order as the narration moments.
 
-CRITICAL: Each scene must directly visualize what's being said at
-that moment. No mismatches.
+Each scene MUST contain exactly these fields:
+- scene: integer from 1 to {SCENE_COUNT}
+- text: narration text for that moment
+- search: literal 2-6 word Pexels/Pixabay search phrase
+- animation: one of zoom_in, zoom_out, pan_left, pan_right, static
 
-Break the narration into exactly {SCENE_COUNT} fast-paced visual scenes.
+SEARCH RULES:
+- Show what is literally being spoken about in that moment.
+- Prefer concrete visible nouns and actions.
+- Include environment only when important.
+- Every search query must be different.
+- Do not use abstract phrases such as amazing discovery, science concept,
+  interesting nature, cinematic footage, or stock footage.
+- Do not invent subjects that are absent from the narration.
 
-Keep narration order.
-
-VISUAL RULES:
-
-- Scene 1 must visually reinforce the hook immediately.
-- Change visuals frequently.
-- Every scene must be meaningfully different.
-- Prefer real subjects.
-- Prefer movement.
-- Prefer close-ups.
-- Prefer scale comparisons.
-- Prefer unusual perspectives.
-- Prefer transformations.
-- Prefer dramatic real footage.
-- Avoid generic stock-footage ideas.
-
-Consecutive scenes should change at least one:
-
-- subject
-- scale
-- environment
-- perspective
-- comparison object
-
-SEARCH FIELD:
-
-The "search" field is extremely important because it is sent directly
-to Pexels and Pixabay.
-
-For EACH narration moment:
-
-1. Identify the SINGLE most important visible subject.
-2. Identify the visible action, environment, or condition.
-3. Create a literal stock-footage search query.
-
-The query must describe WHAT SHOULD ACTUALLY BE VISIBLE on screen
-at the exact moment the narration is spoken.
-
-Rules:
-
-- Use 2-6 words.
-- Prefer literal physical subjects over abstract concepts.
-- Include the main noun whenever possible.
-- Include the important action whenever possible.
-- Include the environment when it changes the meaning.
-- Work as a realistic Pexels/Pixabay query.
-- Be unique for every scene.
-- Do not invent something not present in that narration moment.
-- Do not add words such as cinematic, amazing, beautiful, interesting,
-  concept, background, abstract, or stock footage.
-
-Bad searches:
-
-animal intelligence
-amazing discovery
-ocean mystery
-ancient history
-dangerous science
-
-Good searches:
-
-octopus opening glass jar
-anglerfish dark deep ocean
-roman soldiers marching
-volcano lava eruption closeup
-honey bee collecting pollen
-
-ANIMATION FIELD:
-
-Do not simply repeat the narration.
-
-Animation options:
-
-zoom_in
-zoom_out
-pan_left
-pan_right
-static
-
-Return ONLY valid JSON array with exactly {SCENE_COUNT} objects.
+Return ONLY the JSON array.
+Do not add Markdown fences.
+Do not add an introduction or explanation.
+Do not write anything before or after the JSON.
 """
-    
+
     last_error = None
-    
-    for attempt in range(
-        1,
-        OLLAMA_MAX_RETRIES + 1
-    ):
-        
+
+    for attempt in range(1, OLLAMA_MAX_RETRIES + 1):
         try:
-            
             response = requests.post(
                 OLLAMA_URL,
                 json={
                     "model": MODEL_NAME,
                     "prompt": prompt,
                     "stream": False,
+
+                    # IMPORTANT: force Ollama structured JSON output.
+                    # This was missing from the synced implementation.
+                    "format": SCENE_SCHEMA,
+
+                    # Low temperature makes schema-following more deterministic.
+                    "options": {
+                        "temperature": 0,
+                        "num_predict": 2048,
+                    },
                 },
                 timeout=OLLAMA_TIMEOUT,
             )
-            
+
             response.raise_for_status()
-            
-            result = response.json()["response"]
-            
-            scenes = extract_json(result)
-            
-            _validate_scenes(
+
+            response_data = response.json()
+            raw_result = response_data.get("response", "")
+
+            if not raw_result:
+                raise ValueError(
+                    f"Ollama returned an empty response: {response_data}"
+                )
+
+            scenes = extract_json(raw_result)
+
+            return _validate_scenes(
                 scenes,
                 narration_moments=narration_moments
             )
-            
-            return scenes
-        
+
         except Exception as exc:
-            
             last_error = exc
-            
+
             print(
-                f"Scene plan generation "
-                f"(synced) attempt {attempt} "
+                f"Scene plan generation (synced) attempt {attempt} "
                 f"failed: {exc}"
             )
-            
+
             if attempt < OLLAMA_MAX_RETRIES:
                 time.sleep(attempt * 2)
-    
-    raise RuntimeError(
-        f"Unable to generate synced "
-        f"scene plan after "
-        f"{OLLAMA_MAX_RETRIES} attempts: "
-        f"{last_error}"
+
+    # Do not kill the entire Shorts workflow because the local LLM
+    # returned invalid structured output. Use deterministic scenes instead.
+    print(
+        "All synced scene-plan attempts failed. "
+        "Using deterministic fallback scene plan."
+    )
+    print(f"Last scene-plan error: {last_error}")
+
+    fallback_scenes = split_narration_into_scenes(
+        topic,
+        script
+    )
+
+    # Improve fallback searches using the narration-moment search queries.
+    for index, scene in enumerate(fallback_scenes):
+        if index < len(narration_moments):
+            moment = narration_moments[index]
+
+            scene["text"] = moment.get(
+                "narration",
+                scene["text"]
+            )
+
+            scene["search"] = moment.get(
+                "search_query",
+                scene["search"]
+            ) or topic
+
+    # Ensure duplicate fallback queries do not fail validation.
+    seen = set()
+
+    for index, scene in enumerate(fallback_scenes, start=1):
+        base_query = " ".join(str(scene["search"]).split()).strip() or topic
+        candidate = base_query
+        suffix = 2
+
+        while candidate.lower() in seen:
+            words = str(scene.get("text") or "").split()
+            extra = " ".join(words[:min(suffix, len(words))])
+            candidate = f"{base_query} {extra}".strip()
+            suffix += 1
+
+            if suffix > 6:
+                candidate = f"{base_query} scene {index}"
+                break
+
+        scene["search"] = candidate[:100]
+        seen.add(scene["search"].lower())
+
+    return _validate_scenes(
+        fallback_scenes,
+        narration_moments=narration_moments
     )
 
 

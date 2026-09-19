@@ -27,6 +27,8 @@ from config import (
     OUTPUT_VIDEO,
     CLIPS_DIR,
     TOPIC_CATEGORIES,
+    PEXELS_API_KEY,
+    PIXABAY_API_KEY,
     ensure_output_dirs,
 )
 
@@ -80,6 +82,222 @@ DESCRIPTION_CTAS = [
 ]
 
 FOLLOW_CTA = "\U0001F514 Follow for a new fact every day."
+
+
+# ============================================================
+# CONTENT / MEDIA RETRY SETTINGS
+# ============================================================
+#
+# Stock libraries will not contain suitable footage for every narration.
+# Instead of terminating the whole workflow, retry a different script for
+# the same topic first. Automatic runs can then move on to a new topic.
+
+MAX_SCRIPT_RETRIES_PER_TOPIC = 3
+MAX_TOPIC_RETRIES = 3
+MIN_MEDIA_SCENES = 6
+
+
+def validate_media_configuration():
+    """
+    Fail fast only when no stock-media provider is configured at all.
+
+    One provider is enough to run the workflow, although using both
+    Pexels and Pixabay gives the retry logic a much better chance of
+    finding relevant footage.
+    """
+
+    if not PEXELS_API_KEY and not PIXABAY_API_KEY:
+        raise RuntimeError(
+            "No stock-media provider is configured. "
+            "Configure PEXELS_API_KEY and/or PIXABAY_API_KEY in .env."
+        )
+
+    if not PEXELS_API_KEY:
+        print(
+            "WARNING: PEXELS_API_KEY is not configured. "
+            "Media search will use Pixabay only."
+        )
+
+    if not PIXABAY_API_KEY:
+        print(
+            "WARNING: PIXABAY_API_KEY is not configured. "
+            "Media search will use Pexels only."
+        )
+
+
+def _clear_downloaded_media():
+    """Remove stock files from a failed content attempt."""
+
+    shutil.rmtree(
+        CLIPS_DIR,
+        ignore_errors=True,
+    )
+
+    ensure_output_dirs()
+
+
+def generate_content_with_media(
+    topic,
+    category,
+    max_script_retries=MAX_SCRIPT_RETRIES_PER_TOPIC,
+):
+    """
+    Build script -> scenes -> stock media for one topic.
+
+    Voice and captions are deliberately NOT generated here. They are
+    expensive compared with checking stock-media availability and should
+    only run after a usable visual plan has been found.
+    """
+
+    last_error = None
+
+    for script_attempt in range(1, max_script_retries + 1):
+
+        print("\n" + "=" * 70)
+        print(
+            f"SCRIPT ATTEMPT {script_attempt}/"
+            f"{max_script_retries} FOR TOPIC"
+        )
+        print(f"Topic: {topic}")
+        print("=" * 70)
+
+        try:
+            # ----------------------------------------------------
+            # SCRIPT
+            # ----------------------------------------------------
+            print("\n[2/8] Generating script...")
+
+            script, hook_style = generate_script(topic)
+            script = review_script(topic, script)
+
+            if not script or not script.strip():
+                raise ValueError("Generated script is empty.")
+
+            print(f"\nSCRIPT:\n{script}")
+            print(f"Hook style used: {hook_style}")
+
+            # ----------------------------------------------------
+            # NARRATION BREAKDOWN
+            # ----------------------------------------------------
+            print(
+                "\n[2.5/8] Breaking narration into visual moments..."
+            )
+
+            narration_moments = break_script_into_scenes(script)
+
+            if not narration_moments:
+                raise ValueError(
+                    "Narration could not be split into visual moments."
+                )
+
+            print(
+                f"Narration split into {len(narration_moments)} "
+                "visual moments:"
+            )
+
+            for moment in narration_moments:
+                print(
+                    f"\n  Moment {moment['moment']}: "
+                    f"\"{moment['narration'][:60]}...\""
+                )
+                print(
+                    f"    Search: {moment['search_query']}"
+                )
+
+            # ----------------------------------------------------
+            # SCENE PLAN
+            # ----------------------------------------------------
+            print(
+                "\n[3/8] Creating scene plan "
+                "(synced to narration)..."
+            )
+
+            scenes = generate_scene_plan_with_sync(
+                topic,
+                script,
+                narration_moments,
+            )
+
+            if not scenes:
+                raise ValueError(
+                    "Scene generation returned no scenes."
+                )
+
+            print(f"Created {len(scenes)} scenes.")
+
+            for scene in scenes:
+                print(f"\nScene {scene['scene']}")
+                print(f"Visual: {scene.get('search')}")
+                print(f"Animation: {scene.get('animation')}")
+
+            # ----------------------------------------------------
+            # MEDIA AVAILABILITY
+            # ----------------------------------------------------
+            #
+            # Search BEFORE TTS/Whisper. If the stock libraries do not
+            # contain enough usable media, retry the content without
+            # wasting time creating narration and captions.
+            # ----------------------------------------------------
+            print(
+                "\n[4/8] Searching and downloading media..."
+            )
+
+            _clear_downloaded_media()
+
+            media_files = download_scene_media(scenes)
+            media_count = len(media_files or [])
+
+            print(
+                f"\nMedia found for {media_count}/"
+                f"{len(scenes)} scenes."
+            )
+
+            if media_count >= MIN_MEDIA_SCENES:
+                print(
+                    "\nSUCCESS: Sufficient relevant media found. "
+                    "Continuing with narration and rendering."
+                )
+
+                return {
+                    "topic": topic,
+                    "category": category,
+                    "script": script,
+                    "hook_style": hook_style,
+                    "scenes": scenes,
+                    "media_files": media_files,
+                }
+
+            print(
+                f"\nOnly {media_count} scene(s) had media; "
+                f"at least {MIN_MEDIA_SCENES} are required."
+            )
+
+            if script_attempt < max_script_retries:
+                print(
+                    "Retrying with a different script for "
+                    "the SAME topic..."
+                )
+
+            _clear_downloaded_media()
+
+        except Exception as exc:
+            last_error = exc
+
+            print(
+                f"\nContent attempt {script_attempt} failed: {exc}"
+            )
+
+            _clear_downloaded_media()
+
+    print(
+        "\nAll script attempts failed or had insufficient "
+        f"media for topic: {topic}"
+    )
+
+    if last_error:
+        print(f"Last error: {last_error}")
+
+    return None
 
 
 def build_hashtags(
@@ -243,113 +461,129 @@ def main():
     args = parse_args()
 
     ensure_output_dirs()
+    validate_media_configuration()
 
     print("=" * 70)
     print("        AI YOUTUBE SHORTS GENERATOR")
     print("=" * 70)
 
     # ========================================================
-    # TOPIC
+    # TOPIC / SCRIPT / SCENE / MEDIA RETRY LOOP
+    # ========================================================
+    #
+    # Automatic mode:
+    #   topic 1 -> up to 3 scripts -> topic 2 -> ...
+    #
+    # Explicit --topic mode:
+    #   preserve the requested topic and retry scripts only.
+    #   We should not silently replace a topic explicitly chosen by user.
     # ========================================================
 
-    print("\n[1/8] Generating topic...")
+    content_result = None
 
-    if args.topic:
-        topic = args.topic
-        category = args.category or "custom"
-    else:
-        topic, category = (
-            generate_topic(
+    topic_attempt_limit = (
+        1
+        if args.topic
+        else MAX_TOPIC_RETRIES
+    )
+
+    for topic_attempt in range(1, topic_attempt_limit + 1):
+
+        print("\n" + "#" * 70)
+        print(
+            f"TOPIC ATTEMPT {topic_attempt}/"
+            f"{topic_attempt_limit}"
+        )
+        print("#" * 70)
+
+        # ----------------------------------------------------
+        # TOPIC
+        # ----------------------------------------------------
+        print("\n[1/8] Generating topic...")
+
+        if args.topic:
+            topic = args.topic
+            category = args.category or "custom"
+        else:
+            topic, category = generate_topic(
                 category=args.category,
                 return_category=True,
             )
+
+        print(f"TOPIC: {topic}")
+        print(f"CATEGORY: {category}")
+
+        # ----------------------------------------------------
+        # TRY MULTIPLE SCRIPTS FOR THIS TOPIC
+        # ----------------------------------------------------
+        content_result = generate_content_with_media(
+            topic,
+            category,
         )
 
-    print(f"TOPIC: {topic}")
-    print(f"CATEGORY: {category}")
+        if content_result:
+            print(
+                "\nSUCCESS: Content and media are ready."
+            )
+            break
+
+        if topic_attempt < topic_attempt_limit:
+            print(
+                "\nNo suitable media was found after all script "
+                "attempts. Trying a NEW topic..."
+            )
 
     # ========================================================
-    # SCRIPT
+    # COMPLETE CONTENT FAILURE
     # ========================================================
 
-    print("\n[2/8] Generating script...")
+    if not content_result:
 
-    script, hook_style = generate_script(topic)
+        if args.topic:
+            raise RuntimeError(
+                "Unable to find enough stock media for the requested "
+                f"topic after {MAX_SCRIPT_RETRIES_PER_TOPIC} "
+                "different script attempts."
+            )
 
-    script = review_script(
-        topic,
-        script
-    )
-
-    print(f"\nSCRIPT:\n{script}")
-    print(f"Hook style used: {hook_style}")
-
-    # ========================================================
-    # NARRATION BREAKDOWN FOR VISUAL SYNC
-    # ========================================================
-
-    print("\n[2.5/8] Breaking narration into visual moments...")
-
-    narration_moments = break_script_into_scenes(
-        script
-    )
-
-    print(f"Narration split into {len(narration_moments)} visual moments:")
-    for moment in narration_moments:
-        print(
-            f"\n  Moment {moment['moment']}: "
-            f"\"{moment['narration'][:60]}...\""
+        raise RuntimeError(
+            "Unable to generate a usable Short after "
+            f"{MAX_TOPIC_RETRIES} topic attempts and "
+            f"{MAX_SCRIPT_RETRIES_PER_TOPIC} script attempts "
+            "per topic."
         )
-        print(f"    Search: {moment['search_query']}")
 
     # ========================================================
-    # SCENE PLAN (NOW SYNCED TO NARRATION)
+    # USE THE SUCCESSFUL CONTENT ATTEMPT
     # ========================================================
 
-    print("\n[3/8] Creating scene plan (synced to narration)...")
-
-    scenes = generate_scene_plan_with_sync(
-        topic,
-        script,
-        narration_moments
-    )
-
-    print(f"Created {len(scenes)} scenes.")
-
-    for scene in scenes:
-
-        print(f"\nScene {scene['scene']}")
-        print(f"Visual: {scene.get('search')}")
-        print(f"Animation: {scene.get('animation')}")
+    topic = content_result["topic"]
+    category = content_result["category"]
+    script = content_result["script"]
+    hook_style = content_result["hook_style"]
+    scenes = content_result["scenes"]
+    media_files = content_result["media_files"]
 
     # ========================================================
     # VOICE
     # ========================================================
 
-    print("\n[4/8] Generating narration...")
+    print("\n[5/8] Generating narration...")
 
-    asyncio.run(generate_voice(script, OUTPUT_AUDIO))
+    asyncio.run(
+        generate_voice(
+            script,
+            OUTPUT_AUDIO,
+        )
+    )
 
     # ========================================================
     # CAPTIONS
     # ========================================================
 
-    print("\n[5/8] Generating captions...")
+    print("\n[6/8] Generating captions...")
 
     create_captions(OUTPUT_AUDIO)
-
-    # ========================================================
-    # MEDIA
-    # ========================================================
-
-    print("\n[6/8] Searching and downloading media...")
-
-    media_files = download_scene_media(scenes)
-
-    if not media_files:
-        raise RuntimeError("No media could be downloaded.")
-
-    print(f"Downloaded {len(media_files)} media files.")
 
     # ========================================================
     # VIDEO
@@ -357,7 +591,12 @@ def main():
 
     print("\n[7/8] Creating final video...")
 
-    build_video(media_files, scenes, OUTPUT_AUDIO, OUTPUT_VIDEO)
+    build_video(
+        media_files,
+        scenes,
+        OUTPUT_AUDIO,
+        OUTPUT_VIDEO,
+    )
 
     # ========================================================
     # YOUTUBE
@@ -371,29 +610,24 @@ def main():
 
         print("\n[8/8] Uploading to YouTube...")
 
-        full_description = (
-            build_full_description(
-                script,
-                topic,
-                category,
-            )
+        full_description = build_full_description(
+            script,
+            topic,
+            category,
         )
 
-        youtube_title = (
-            generate_title(
-                topic,
-                script
-            )
+        youtube_title = generate_title(
+            topic,
+            script,
         )
 
         tags = build_tags(
             topic,
-            category
+            category,
         )
 
         print(
-            f"YouTube title: "
-            f"{youtube_title}"
+            f"YouTube title: {youtube_title}"
         )
 
         response = upload_video(
@@ -408,14 +642,6 @@ def main():
             build_first_comment(topic),
         )
 
-        # ================================================
-        # TRACK VIDEO PERFORMANCE
-        # ================================================
-        # Store metadata for future analytics:
-        # topic, category, hook_style, etc.
-        # This allows us to correlate performance with
-        # content choices later.
-
         video_id = response["id"]
         narration_length = len(script.split())
 
@@ -429,14 +655,17 @@ def main():
         )
 
         print(
-            f"\n✓ Video tracked for analytics: {video_id}"
+            f"\nVideo tracked for analytics: {video_id}"
         )
 
     # ========================================================
-    # CLEANUP (downloaded stock clips don't need to stick around)
+    # CLEANUP
     # ========================================================
 
-    shutil.rmtree(CLIPS_DIR, ignore_errors=True)
+    shutil.rmtree(
+        CLIPS_DIR,
+        ignore_errors=True,
+    )
 
     print("\n" + "=" * 70)
     print("                    COMPLETED")
