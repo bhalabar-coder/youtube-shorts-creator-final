@@ -1,5 +1,4 @@
 import os
-import random
 import time
 import requests
 
@@ -164,7 +163,7 @@ def select_pexels_video_file(video):
     return candidates[0]
 
 
-def find_pexels_video(query):
+def find_pexels_video(query, used_media_ids=None):
 
     candidates = []
 
@@ -236,21 +235,22 @@ def find_pexels_video(query):
             )
 
     if not candidates:
-
         return None
 
-    # Previously the first Pexels result was always selected.
-    #
-    # Pick from the strongest first few results instead.
-    #
-    # This gives more visual variety between generated videos.
+    used_media_ids = used_media_ids or set()
 
-    return random.choice(
-        candidates[:5]
-    )
+    # Pexels returns results in relevance order.  Keep that order instead of
+    # randomly selecting from the first few results, but skip assets already
+    # used by another scene.
+    for candidate in candidates:
+        media_key = (candidate.get("source"), candidate.get("source_id"))
+        if media_key not in used_media_ids or media_key == (None, None):
+            return candidate
+
+    return None
 
 
-def find_pexels_photo(query):
+def find_pexels_photo(query, used_media_ids=None):
 
     try:
 
@@ -262,7 +262,14 @@ def find_pexels_photo(query):
 
         return None
 
+    used_media_ids = used_media_ids or set()
+
     for photo in photos:
+
+        media_key = ("pexels", photo.get("id"))
+
+        if media_key in used_media_ids and media_key != (None, None):
+            continue
 
         source = photo.get("src", {})
 
@@ -292,7 +299,7 @@ def find_pexels_photo(query):
 # Pexels doesn't have footage for)
 # ============================================================
 
-def find_pixabay_video(query):
+def find_pixabay_video(query, used_media_ids=None):
 
     if not PIXABAY_API_KEY:
         return None
@@ -319,7 +326,14 @@ def find_pixabay_video(query):
 
         return None
 
+    used_media_ids = used_media_ids or set()
+
     for hit in hits:
+
+        media_key = ("pixabay", hit.get("id"))
+
+        if media_key in used_media_ids and media_key != (None, None):
+            continue
 
         videos = hit.get("videos", {})
 
@@ -345,7 +359,7 @@ def find_pixabay_video(query):
     return None
 
 
-def find_pixabay_photo(query):
+def find_pixabay_photo(query, used_media_ids=None):
 
     if not PIXABAY_API_KEY:
         return None
@@ -373,7 +387,14 @@ def find_pixabay_photo(query):
 
         return None
 
+    used_media_ids = used_media_ids or set()
+
     for hit in hits:
+
+        media_key = ("pixabay", hit.get("id"))
+
+        if media_key in used_media_ids and media_key != (None, None):
+            continue
 
         url = hit.get("largeImageURL") or hit.get("webformatURL")
 
@@ -396,29 +417,132 @@ def find_pixabay_photo(query):
 # SMART SEARCH (Pexels first, Pixabay as a free fallback)
 # ============================================================
 
-def get_media(query):
+def normalize_search_queries(query):
+    """
+    Build progressively broader stock-search queries.
 
-    print(f"Searching media: {query}")
+    Exact literal searches are attempted first.  If the stock library has no
+    match, generic modifiers are removed before falling back to a shorter
+    subject-focused query.
+    """
 
-    for finder, label in (
+    query = " ".join(str(query or "").lower().split())
+
+    if not query:
+        return []
+
+    queries = [query]
+    words = query.split()
+
+    removable = {
+        "closeup",
+        "close-up",
+        "cinematic",
+        "footage",
+        "video",
+        "real",
+        "large",
+        "giant",
+        "dramatic",
+    }
+
+    simplified = [word for word in words if word not in removable]
+
+    if simplified:
+        candidate = " ".join(simplified)
+        if candidate not in queries:
+            queries.append(candidate)
+
+    if len(simplified) > 3:
+        candidate = " ".join(simplified[:3])
+        if candidate not in queries:
+            queries.append(candidate)
+
+    if len(simplified) > 2:
+        candidate = " ".join(simplified[:2])
+        if candidate not in queries:
+            queries.append(candidate)
+
+    # Keep at least the main subject as the final fallback.  In most generated
+    # queries the first token is the subject because scene_agent is instructed
+    # to put the visible subject first.
+    if simplified:
+        candidate = simplified[0]
+        if candidate not in queries:
+            queries.append(candidate)
+
+    return queries[:5]
+
+
+def get_media(
+    query,
+    used_media_ids=None
+):
+    """
+    Find the most relevant free media for a scene.
+
+    Priority:
+      1. Exact/relevant stock video
+      2. Broader stock video
+      3. Exact/relevant stock photo
+      4. Broader stock photo
+
+    A relevant still image is preferable to unrelated video; video_agent can
+    animate photos using the scene's pan/zoom animation.
+    """
+
+    used_media_ids = used_media_ids if used_media_ids is not None else set()
+    search_queries = normalize_search_queries(query)
+
+    print(f"Original media query: {query}")
+    print("Search fallbacks: " + " -> ".join(search_queries))
+
+    # First exhaust video possibilities across increasingly broad queries.
+    video_finders = (
         (find_pexels_video, "Pexels video"),
         (find_pixabay_video, "Pixabay video"),
+    )
+
+    for search_query in search_queries:
+        print(f"Searching video: {search_query}")
+
+        for finder, label in video_finders:
+            media = finder(search_query, used_media_ids=used_media_ids)
+
+            if media:
+                media["matched_query"] = search_query
+                print(
+                    f"  {label} selected: "
+                    f"{media.get('width')}x{media.get('height')}"
+                )
+                return media
+
+            print(f"  {label} unavailable.")
+
+    # If there is no useful video, prefer a closely matching still image over
+    # forcing an unrelated moving clip.
+    photo_finders = (
         (find_pexels_photo, "Pexels photo"),
         (find_pixabay_photo, "Pixabay photo"),
-    ):
+    )
 
-        media = finder(query)
+    for search_query in search_queries:
+        print(f"Searching photo: {search_query}")
 
-        if media:
+        for finder, label in photo_finders:
+            media = finder(search_query, used_media_ids=used_media_ids)
 
-            print(f"  {label} selected: {media.get('width')}x{media.get('height')}")
+            if media:
+                media["matched_query"] = search_query
+                print(
+                    f"  {label} selected: "
+                    f"{media.get('width')}x{media.get('height')}"
+                )
+                return media
 
-            return media
-
-        print(f"  {label} unavailable.")
+            print(f"  {label} unavailable.")
 
     print("  No media found from any source.")
-
     return None
 
 
@@ -561,53 +685,21 @@ def download_scene_media(
             f"Query: {query}"
         )
 
-        media = None
+        # get_media() now knows which assets were already selected, so it
+        # can keep Pexels/Pixabay relevance ordering while skipping duplicates.
+        media = get_media(
+            query,
+            used_media_ids=used_media_ids,
+        )
 
-        # ====================================================
-        # AVOID EXACT DUPLICATE STOCK MEDIA
-        # ====================================================
-
-        for _ in range(3):
-
-            candidate = get_media(
-                query
-            )
-
-            if not candidate:
-
-                break
-
+        if media:
             media_key = (
-
-                candidate.get(
-                    "source"
-                ),
-
-                candidate.get(
-                    "source_id"
-                ),
+                media.get("source"),
+                media.get("source_id"),
             )
 
-            if (
-                media_key
-                not in used_media_ids
-                or
-                media_key
-                == (None, None)
-            ):
-
-                media = candidate
-
-                used_media_ids.add(
-                    media_key
-                )
-
-                break
-
-            print(
-                "Duplicate stock asset "
-                "detected; trying again."
-            )
+            if media_key != (None, None):
+                used_media_ids.add(media_key)
 
         if not media:
 
@@ -671,6 +763,14 @@ def download_scene_media(
 
                 "query":
                     query,
+
+                # Useful for debugging when the exact query had no stock
+                # result and a broader fallback query was used.
+                "matched_query":
+                    media.get(
+                        "matched_query",
+                        query,
+                    ),
             })
 
             print(

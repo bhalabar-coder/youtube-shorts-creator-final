@@ -475,8 +475,12 @@ def generate_scene_plan_with_sync(
     
     # Build a detailed breakdown that LLM can use
     moments_text = "\n".join([
-        f"Moment {m['moment']}: \"{m['narration']}\"\n"
-        f"  Visual keywords: {', '.join(m['keywords'])}"
+        (
+            f"Moment {m['moment']}:\n"
+            f"Narration: \"{m['narration']}\"\n"
+            f"Keywords: {', '.join(m['keywords'])}\n"
+            f"Base stock search: {m['search_query']}"
+        )
         for m in narration_moments
     ])
     
@@ -531,27 +535,46 @@ Consecutive scenes should change at least one:
 
 SEARCH FIELD:
 
-The "search" field must:
+The "search" field is extremely important because it is sent directly
+to Pexels and Pixabay.
 
-- contain 2-5 words
-- describe a REAL photographable subject
-- work as a Pexels or Pixabay search query
-- be unique for every scene
-- directly match the visual keywords for that narration moment
+For EACH narration moment:
+
+1. Identify the SINGLE most important visible subject.
+2. Identify the visible action, environment, or condition.
+3. Create a literal stock-footage search query.
+
+The query must describe WHAT SHOULD ACTUALLY BE VISIBLE on screen
+at the exact moment the narration is spoken.
+
+Rules:
+
+- Use 2-6 words.
+- Prefer literal physical subjects over abstract concepts.
+- Include the main noun whenever possible.
+- Include the important action whenever possible.
+- Include the environment when it changes the meaning.
+- Work as a realistic Pexels/Pixabay query.
+- Be unique for every scene.
+- Do not invent something not present in that narration moment.
+- Do not add words such as cinematic, amazing, beautiful, interesting,
+  concept, background, abstract, or stock footage.
 
 Bad searches:
 
-interesting science
-amazing nature
-space concept
+animal intelligence
+amazing discovery
+ocean mystery
+ancient history
+dangerous science
 
 Good searches:
 
-octopus underwater closeup
-volcano lava eruption
-astronaut earth window
-giant blue whale underwater
-lightning storm slow motion
+octopus opening glass jar
+anglerfish dark deep ocean
+roman soldiers marching
+volcano lava eruption closeup
+honey bee collecting pollen
 
 ANIMATION FIELD:
 

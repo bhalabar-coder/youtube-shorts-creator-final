@@ -113,6 +113,16 @@ BANNED_OPENERS = (
     "today we are",
     "in this video",
     "welcome",
+
+    # LLM meta-introductions must never reach TTS.
+    "here is the narration",
+    "here's the narration",
+    "here is the revised narration",
+    "here's the revised narration",
+    "here is the improved narration",
+    "here's the improved narration",
+    "here is the script",
+    "here's the script",
 )
 
 
@@ -232,22 +242,76 @@ def _ollama(prompt):
 def _clean_spoken_text(
     result
 ):
+    """
+    Return only text that should actually be spoken by TTS.
 
-    unwanted_prefixes = (
-        "narration:",
-        "script:",
+    LLMs occasionally ignore prompt instructions and prepend text such as
+    "Here is the revised narration:".  Strip those meta-introductions
+    deterministically so they can never become part of the final video.
+    """
+
+    if not result:
+        return ""
+
+    result = str(result).strip()
+
+    # Remove Markdown/code fences that occasionally wrap model output.
+    result = re.sub(
+        r"^```(?:text|markdown)?\s*",
+        "",
+        result,
+        flags=re.IGNORECASE,
+    )
+    result = re.sub(r"\s*```$", "", result)
+
+    # Remove a meta prefix while preserving narration that follows it on
+    # the same line.  Keep this deliberately limited to common assistant
+    # phrases so a legitimate opening sentence is not removed.
+    meta_prefix_patterns = (
+        r"^\s*here\s+is\s+the\s+(?:revised|improved|updated|shortened|final|polished)\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*here'?s\s+the\s+(?:revised|improved|updated|shortened|final|polished)\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*here\s+is\s+(?:a|your)\s+(?:revised|improved|updated|shortened|final|polished)\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*here'?s\s+(?:a|your)\s+(?:revised|improved|updated|shortened|final|polished)\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*here\s+is\s+the\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*here'?s\s+the\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*(?:revised|improved|updated|shortened|final|polished)\s+(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*(?:narration|script)\s*[:\-–—]*\s*",
+        r"^\s*sure[!,.\s]*(?:here\s+is|here'?s)\s+.*?(?:narration|script)\s*[:\-–—]*\s*",
+    )
+
+    # More than one prefix can occasionally be stacked, so run a few
+    # passes until the text no longer changes.
+    for _ in range(3):
+        before = result
+        for pattern in meta_prefix_patterns:
+            result = re.sub(
+                pattern,
+                "",
+                result,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        if result == before:
+            break
+
+    # Remove non-spoken production metadata when it appears on its own line.
+    unwanted_line_prefixes = (
         "sound suggestion:",
         "sound:",
         "music suggestion:",
         "music:",
         "topic:",
         "title:",
+        "visual suggestion:",
+        "visual:",
+        "scene suggestion:",
+        "scene:",
+        "production note:",
     )
 
     cleaned_lines = []
 
     for line in result.splitlines():
-
         clean = line.strip()
 
         if not clean:
@@ -255,35 +319,20 @@ def _clean_spoken_text(
 
         lower = clean.lower()
 
-        if any(
-            lower.startswith(prefix)
-            for prefix
-            in unwanted_prefixes
-        ):
+        if any(lower.startswith(prefix) for prefix in unwanted_line_prefixes):
             continue
 
         if clean.startswith("#"):
             continue
 
-        cleaned_lines.append(
-            clean
-        )
+        cleaned_lines.append(clean)
 
-    result = " ".join(
-        cleaned_lines
-    )
+    result = " ".join(cleaned_lines)
+    result = re.sub(r"\s+", " ", result).strip()
+    result = re.sub(r"[\[\]{}]", "", result)
 
-    result = re.sub(
-        r"\s+",
-        " ",
-        result
-    ).strip()
-
-    result = re.sub(
-        r"[\[\]{}]",
-        "",
-        result
-    )
+    # Models sometimes put the whole answer inside quotes.
+    result = result.strip('"\' ')
 
     return result
 
@@ -707,93 +756,110 @@ def extract_visual_keywords(
 
 
 def break_script_into_scenes(
-    script
+    script,
+    target_moments=9
 ):
     """
-    Split the script into 9 visual moments, each tied to specific
-    narration. Extract keywords from each moment that describe what
-    should be shown visually.
-    
-    Returns list of dicts: {
-        "moment": 1,
-        "narration": "Exact words being spoken",
-        "keywords": ["keyword1", "keyword2", ...],
-        "search_query": "keyword1 keyword2 keyword3"
-    }
+    Split narration into non-overlapping visual moments.
+
+    Each part of the narration belongs to one moment only.  This avoids the
+    previous overlap where sentence 2 could appear in both scene 1 and scene 2,
+    which made stock-footage selection drift away from the spoken audio.
     """
-    
-    # Split by sentences to get coherent narration chunks
+
+    script = str(script or "").strip()
+
     sentences = [
         s.strip()
         for s in re.split(
             r"(?<=[.!?])\s+",
-            script.strip()
+            script
         )
         if s.strip()
     ]
-    
+
     if not sentences:
-        sentences = [script.strip()]
-    
-    # Group sentences into ~9 visual moments (some moments might
-    # be 1 sentence, some might be 2-3 if needed to fill 9 moments)
-    target_moments = 9
-    moment_size = max(
-        1,
-        len(sentences) // target_moments
-    )
-    
+        sentences = [script]
+
+    chunks = []
+
+    if len(sentences) >= target_moments:
+        # Evenly distribute complete sentences across the requested moments.
+        total = len(sentences)
+
+        for index in range(target_moments):
+            start = round(index * total / target_moments)
+            end = round((index + 1) * total / target_moments)
+            chunk = sentences[start:end]
+
+            if chunk:
+                chunks.append(" ".join(chunk))
+
+    else:
+        # When there are too few sentences, first split at natural clause
+        # boundaries rather than duplicating narration.
+        expanded = []
+
+        for sentence in sentences:
+            parts = [
+                part.strip()
+                for part in re.split(
+                    r"(?<=[,;:])\s+|\s+(?:but|while|because|and then)\s+",
+                    sentence,
+                    flags=re.IGNORECASE,
+                )
+                if part.strip()
+            ]
+
+            expanded.extend(parts if len(parts) > 1 else [sentence])
+
+        # If more moments are still needed, split the longest chunks by words.
+        # This keeps every spoken word represented exactly once.
+        while len(expanded) < target_moments and expanded:
+            longest_index = max(
+                range(len(expanded)),
+                key=lambda idx: len(expanded[idx].split()),
+            )
+
+            words = expanded[longest_index].split()
+
+            if len(words) < 8:
+                break
+
+            midpoint = len(words) // 2
+            first = " ".join(words[:midpoint]).strip()
+            second = " ".join(words[midpoint:]).strip()
+
+            if not first or not second:
+                break
+
+            expanded[longest_index:longest_index + 1] = [first, second]
+
+        chunks = expanded[:target_moments]
+
+    # Extremely short scripts may still yield fewer than nine meaningful
+    # chunks.  Use empty moments instead of repeating spoken narration; the
+    # scene planner can still create a visual continuation for them.
+    while len(chunks) < target_moments:
+        chunks.append("")
+
     moments = []
-    current_moment = 1
-    
-    for i in range(
-        0,
-        len(sentences),
-        moment_size
-    ):
-        
-        # Get the next 1-2 sentences for this moment
-        chunk_sentences = sentences[
-            i : i + moment_size + 1
-        ]
-        
-        narration = " ".join(chunk_sentences)
-        
-        # Extract visual keywords from this specific narration
-        keywords = extract_visual_keywords(
-            narration
-        )
-        
-        # Build a search query from the keywords
-        search_query = " ".join(keywords)
-        
+
+    for index, narration in enumerate(chunks[:target_moments], start=1):
+        keywords = extract_visual_keywords(narration)
+        search_query = " ".join(keywords[:5])
+
         if not search_query:
-            # Fallback: use first word if no keywords found
             words = narration.split()
-            search_query = words[0] if words else ""
-        
+            search_query = " ".join(words[:4])
+
         moments.append({
-            "moment": current_moment,
+            "moment": index,
             "narration": narration,
             "keywords": keywords,
             "search_query": search_query,
         })
-        
-        current_moment += 1
-    
-    # Ensure we have exactly 9 moments by adjusting
-    if len(moments) < 9:
-        # Duplicate the last moment if we don't have enough
-        while len(moments) < 9:
-            last = moments[-1].copy()
-            last["moment"] = len(moments) + 1
-            moments.append(last)
-    elif len(moments) > 9:
-        # Merge extra moments into the last ones
-        moments = moments[:9]
-        for i, m in enumerate(moments):
-            m["moment"] = i + 1
-    
+
     return moments
 
 
