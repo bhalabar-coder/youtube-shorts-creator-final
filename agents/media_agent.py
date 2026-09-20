@@ -1,549 +1,453 @@
 import os
+import re
 import time
-import requests
-
 from pathlib import Path
 
-from config import (
-    PEXELS_API_KEY,
-    PIXABAY_API_KEY,
-    CLIPS_DIR,
-)
+import requests
+
+from config import PEXELS_API_KEY, PIXABAY_API_KEY, CLIPS_DIR
 
 
 PEXELS_VIDEO_URL = "https://api.pexels.com/videos/search"
 PEXELS_PHOTO_URL = "https://api.pexels.com/v1/search"
-
 PIXABAY_VIDEO_URL = "https://pixabay.com/api/videos/"
 PIXABAY_PHOTO_URL = "https://pixabay.com/api/"
 
-
-# ============================================================
-# SETTINGS
-# ============================================================
-
 DOWNLOAD_TIMEOUT = (30, 180)
-
 MAX_DOWNLOAD_RETRIES = 3
-
 CHUNK_SIZE = 1024 * 1024
-
-
-# ============================================================
-# SESSIONS
-# ============================================================
+MAX_RESULTS_PER_QUERY = 6
+MAX_QUERY_COUNT = 5
 
 pexels_session = requests.Session()
-
 pexels_session.headers.update({
     "Authorization": PEXELS_API_KEY or "",
-    "User-Agent": "AI-YouTube-Shorts-Generator/1.0"
+    "User-Agent": "AI-YouTube-Shorts-Generator/1.0",
 })
 
 pixabay_session = requests.Session()
-
 pixabay_session.headers.update({
-    "User-Agent": "AI-YouTube-Shorts-Generator/1.0"
+    "User-Agent": "AI-YouTube-Shorts-Generator/1.0",
 })
 
 
-# ============================================================
-# API KEY
-# ============================================================
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
+    "from", "had", "has", "have", "he", "her", "his", "in", "into",
+    "is", "it", "its", "of", "on", "or", "our", "she", "that", "the",
+    "their", "them", "they", "this", "to", "was", "were", "with", "you",
+    "your", "can", "could", "would", "will", "than", "then", "these",
+    "those", "very", "more", "most", "much", "many", "some", "about",
+}
+
 
 def validate_pexels_key():
-
     if not PEXELS_API_KEY:
         raise RuntimeError(
             "PEXELS_API_KEY is not configured. Get a free key at "
-            "https://www.pexels.com/api/ and set it in your .env file."
+            "https://www.pexels.com/api/ and set it as a secret/environment variable."
         )
 
 
+def _tokenize(text):
+    words = re.findall(r"[a-z0-9]+", str(text or "").lower())
+    return {word for word in words if len(word) > 2 and word not in STOPWORDS}
+
+
+def _clean_query(query):
+    return " ".join(str(query or "").strip().split())
+
+
+def normalize_search_queries(query):
+    """Build progressively broader stock-search queries from one phrase."""
+    query = _clean_query(query).lower()
+    if not query:
+        return []
+
+    queries = [query]
+    removable = {
+        "closeup", "close-up", "cinematic", "footage", "video", "real",
+        "large", "giant", "dramatic", "photorealistic", "vertical",
+    }
+    words = [word for word in query.split() if word not in removable]
+
+    if words:
+        simplified = " ".join(words)
+        if simplified not in queries:
+            queries.append(simplified)
+    if len(words) > 3:
+        candidate = " ".join(words[:3])
+        if candidate not in queries:
+            queries.append(candidate)
+    if len(words) > 2:
+        candidate = " ".join(words[:2])
+        if candidate not in queries:
+            queries.append(candidate)
+    if words and words[0] not in queries:
+        queries.append(words[0])
+
+    return queries[:MAX_QUERY_COUNT]
+
+
+def build_scene_queries(scene):
+    """Use the AI scene planner's alternatives first, then safe broader fallbacks."""
+    queries = []
+
+    for value in scene.get("search_queries") or []:
+        value = _clean_query(value)
+        if value and value.lower() not in {q.lower() for q in queries}:
+            queries.append(value)
+
+    primary = _clean_query(scene.get("search") or scene.get("visual_query"))
+    if primary and primary.lower() not in {q.lower() for q in queries}:
+        queries.insert(0, primary)
+
+    if primary:
+        for value in normalize_search_queries(primary):
+            if value.lower() not in {q.lower() for q in queries}:
+                queries.append(value)
+
+    return queries[:MAX_QUERY_COUNT]
+
+
 # ============================================================
-# PEXELS: VIDEO SEARCH
+# PEXELS
 # ============================================================
 
 def search_pexels_videos(query, orientation="portrait"):
-
     validate_pexels_key()
-
     response = pexels_session.get(
         PEXELS_VIDEO_URL,
         params={
             "query": query,
             "orientation": orientation,
             "size": "large",
-            "per_page": 10,
+            "per_page": MAX_RESULTS_PER_QUERY,
             "page": 1,
         },
         timeout=30,
     )
-
     response.raise_for_status()
-
     return response.json().get("videos", [])
 
 
 def search_pexels_photos(query):
-
     validate_pexels_key()
-
     response = pexels_session.get(
         PEXELS_PHOTO_URL,
         params={
             "query": query,
             "orientation": "portrait",
             "size": "large",
-            "per_page": 10,
+            "per_page": MAX_RESULTS_PER_QUERY,
             "page": 1,
         },
         timeout=30,
     )
-
     response.raise_for_status()
-
     return response.json().get("photos", [])
 
 
 def select_pexels_video_file(video):
-
-    files = video.get("video_files", [])
-
     candidates = []
-
-    for file in files:
-
-        link = file.get("link")
-
-        if not link:
+    for item in video.get("video_files", []):
+        link = item.get("link")
+        width = int(item.get("width") or 0)
+        height = int(item.get("height") or 0)
+        file_type = item.get("file_type", "")
+        if not link or width <= 0 or height <= 0:
             continue
-
-        width = file.get("width", 0)
-        height = file.get("height", 0)
-        file_type = file.get("file_type", "")
-
         if file_type and file_type != "video/mp4":
             continue
-
-        if width <= 0 or height <= 0:
-            continue
-
-        candidates.append({
-            "link": link,
-            "width": width,
-            "height": height,
-        })
+        candidates.append({"link": link, "width": width, "height": height})
 
     if not candidates:
         return None
 
-    portrait = [
-        item for item in candidates
-        if item["height"] >= item["width"]
-    ]
-
-    if portrait:
-        candidates = portrait
-
-    suitable = [
-        item for item in candidates
-        if item["width"] >= 720 and item["height"] >= 1280
-    ]
-
-    if suitable:
-        candidates = suitable
-
+    # Prefer portrait, then a rendition close to 1080x1920 without requiring it.
     candidates.sort(
         key=lambda item: (
-            abs(item["width"] - 1080) + abs(item["height"] - 1920)
+            0 if item["height"] >= item["width"] else 1,
+            abs(item["width"] - 1080) + abs(item["height"] - 1920),
         )
     )
-
     return candidates[0]
 
 
-def find_pexels_video(query, used_media_ids=None):
+def collect_pexels_video_candidates(query, query_rank):
+    candidates = []
+    seen = set()
+
+    for orientation in ("portrait", "landscape"):
+        try:
+            videos = search_pexels_videos(query, orientation)
+        except Exception as exc:
+            print(f"Pexels {orientation} video search failed for '{query}': {exc}")
+            continue
+
+        for api_rank, video in enumerate(videos):
+            source_id = video.get("id")
+            if source_id in seen:
+                continue
+            selected = select_pexels_video_file(video)
+            if not selected:
+                continue
+            seen.add(source_id)
+            candidates.append({
+                "type": "video",
+                "url": selected["link"],
+                "width": selected["width"],
+                "height": selected["height"],
+                "duration": video.get("duration"),
+                "source": "pexels",
+                "source_id": source_id,
+                "source_url": video.get("url"),
+                "matched_query": query,
+                "query_rank": query_rank,
+                "api_rank": api_rank,
+                "metadata_text": query,
+            })
+
+    return candidates
+
+
+def collect_pexels_photo_candidates(query, query_rank):
+    try:
+        photos = search_pexels_photos(query)
+    except Exception as exc:
+        print(f"Pexels photo search failed for '{query}': {exc}")
+        return []
 
     candidates = []
-
-    for orientation in (
-        "portrait",
-        "landscape"
-    ):
-
-        try:
-
-            videos = (
-                search_pexels_videos(
-                    query,
-                    orientation
-                )
-            )
-
-            for video in videos:
-
-                selected = (
-                    select_pexels_video_file(
-                        video
-                    )
-                )
-
-                if selected:
-
-                    candidates.append({
-
-                        "type":
-                            "video",
-
-                        "url":
-                            selected[
-                                "link"
-                            ],
-
-                        "width":
-                            selected[
-                                "width"
-                            ],
-
-                        "height":
-                            selected[
-                                "height"
-                            ],
-
-                        "source":
-                            "pexels",
-
-                        "source_id":
-                            video.get(
-                                "id"
-                            ),
-
-                        "source_url":
-                            video.get(
-                                "url"
-                            ),
-                    })
-
-        except Exception as exc:
-
-            print(
-                f"Pexels "
-                f"{orientation} "
-                "video search failed: "
-                f"{exc}"
-            )
-
-    if not candidates:
-        return None
-
-    used_media_ids = used_media_ids or set()
-
-    # Pexels returns results in relevance order.  Keep that order instead of
-    # randomly selecting from the first few results, but skip assets already
-    # used by another scene.
-    for candidate in candidates:
-        media_key = (candidate.get("source"), candidate.get("source_id"))
-        if media_key not in used_media_ids or media_key == (None, None):
-            return candidate
-
-    return None
-
-
-def find_pexels_photo(query, used_media_ids=None):
-
-    try:
-
-        photos = search_pexels_photos(query)
-
-    except Exception as exc:
-
-        print(f"Pexels photo search failed: {exc}")
-
-        return None
-
-    used_media_ids = used_media_ids or set()
-
-    for photo in photos:
-
-        media_key = ("pexels", photo.get("id"))
-
-        if media_key in used_media_ids and media_key != (None, None):
-            continue
-
+    for api_rank, photo in enumerate(photos):
         source = photo.get("src", {})
-
-        url = (
-            source.get("large2x")
-            or source.get("large")
-            or source.get("original")
-        )
-
-        if url:
-
-            return {
-                "type": "photo",
-                "url": url,
-                "width": photo.get("width"),
-                "height": photo.get("height"),
-                "source": "pexels",
-                "source_id": photo.get("id"),
-                "source_url": photo.get("url"),
-            }
-
-    return None
+        url = source.get("large2x") or source.get("large") or source.get("original")
+        if not url:
+            continue
+        candidates.append({
+            "type": "photo",
+            "url": url,
+            "width": photo.get("width"),
+            "height": photo.get("height"),
+            "source": "pexels",
+            "source_id": photo.get("id"),
+            "source_url": photo.get("url"),
+            "matched_query": query,
+            "query_rank": query_rank,
+            "api_rank": api_rank,
+            "metadata_text": query,
+        })
+    return candidates
 
 
 # ============================================================
-# PIXABAY (free fallback — widens coverage for niche topics that
-# Pexels doesn't have footage for)
+# PIXABAY
 # ============================================================
 
-def find_pixabay_video(query, used_media_ids=None):
-
+def collect_pixabay_video_candidates(query, query_rank):
     if not PIXABAY_API_KEY:
-        return None
+        return []
 
     try:
-
         response = pixabay_session.get(
             PIXABAY_VIDEO_URL,
-            params={
-                "key": PIXABAY_API_KEY,
-                "q": query,
-                "per_page": 10,
-            },
+            params={"key": PIXABAY_API_KEY, "q": query, "per_page": MAX_RESULTS_PER_QUERY},
             timeout=30,
         )
-
         response.raise_for_status()
-
         hits = response.json().get("hits", [])
-
     except Exception as exc:
+        print(f"Pixabay video search failed for '{query}': {exc}")
+        return []
 
-        print(f"Pixabay video search failed: {exc}")
-
-        return None
-
-    used_media_ids = used_media_ids or set()
-
-    for hit in hits:
-
-        media_key = ("pixabay", hit.get("id"))
-
-        if media_key in used_media_ids and media_key != (None, None):
-            continue
-
-        videos = hit.get("videos", {})
-
-        # Pixabay doesn't offer native portrait video, so prefer the
-        # largest rendition available; prepare_vertical_clip() in
-        # video_agent.py will crop it to 1080x1920.
+    candidates = []
+    for api_rank, hit in enumerate(hits):
+        renditions = hit.get("videos", {})
+        selected = None
         for quality in ("large", "medium", "small", "tiny"):
+            item = renditions.get(quality)
+            if item and item.get("url"):
+                selected = item
+                break
+        if not selected:
+            continue
+        candidates.append({
+            "type": "video",
+            "url": selected["url"],
+            "width": selected.get("width"),
+            "height": selected.get("height"),
+            "duration": hit.get("duration"),
+            "source": "pixabay",
+            "source_id": hit.get("id"),
+            "source_url": hit.get("pageURL"),
+            "matched_query": query,
+            "query_rank": query_rank,
+            "api_rank": api_rank,
+            "metadata_text": f"{query} {hit.get('tags', '')}",
+        })
+    return candidates
 
-            candidate = videos.get(quality)
 
-            if candidate and candidate.get("url"):
-
-                return {
-                    "type": "video",
-                    "url": candidate["url"],
-                    "width": candidate.get("width"),
-                    "height": candidate.get("height"),
-                    "source": "pixabay",
-                    "source_id": hit.get("id"),
-                    "source_url": hit.get("pageURL"),
-                }
-
-    return None
-
-
-def find_pixabay_photo(query, used_media_ids=None):
-
+def collect_pixabay_photo_candidates(query, query_rank):
     if not PIXABAY_API_KEY:
-        return None
+        return []
 
     try:
-
         response = pixabay_session.get(
             PIXABAY_PHOTO_URL,
             params={
                 "key": PIXABAY_API_KEY,
                 "q": query,
                 "image_type": "photo",
-                "per_page": 10,
+                "per_page": MAX_RESULTS_PER_QUERY,
             },
             timeout=30,
         )
-
         response.raise_for_status()
-
         hits = response.json().get("hits", [])
-
     except Exception as exc:
-
-        print(f"Pixabay photo search failed: {exc}")
-
-        return None
-
-    used_media_ids = used_media_ids or set()
-
-    for hit in hits:
-
-        media_key = ("pixabay", hit.get("id"))
-
-        if media_key in used_media_ids and media_key != (None, None):
-            continue
-
-        url = hit.get("largeImageURL") or hit.get("webformatURL")
-
-        if url:
-
-            return {
-                "type": "photo",
-                "url": url,
-                "width": hit.get("imageWidth"),
-                "height": hit.get("imageHeight"),
-                "source": "pixabay",
-                "source_id": hit.get("id"),
-                "source_url": hit.get("pageURL"),
-            }
-
-    return None
-
-
-# ============================================================
-# SMART SEARCH (Pexels first, Pixabay as a free fallback)
-# ============================================================
-
-def normalize_search_queries(query):
-    """
-    Build progressively broader stock-search queries.
-
-    Exact literal searches are attempted first.  If the stock library has no
-    match, generic modifiers are removed before falling back to a shorter
-    subject-focused query.
-    """
-
-    query = " ".join(str(query or "").lower().split())
-
-    if not query:
+        print(f"Pixabay photo search failed for '{query}': {exc}")
         return []
 
-    queries = [query]
-    words = query.split()
-
-    removable = {
-        "closeup",
-        "close-up",
-        "cinematic",
-        "footage",
-        "video",
-        "real",
-        "large",
-        "giant",
-        "dramatic",
-    }
-
-    simplified = [word for word in words if word not in removable]
-
-    if simplified:
-        candidate = " ".join(simplified)
-        if candidate not in queries:
-            queries.append(candidate)
-
-    if len(simplified) > 3:
-        candidate = " ".join(simplified[:3])
-        if candidate not in queries:
-            queries.append(candidate)
-
-    if len(simplified) > 2:
-        candidate = " ".join(simplified[:2])
-        if candidate not in queries:
-            queries.append(candidate)
-
-    # Keep at least the main subject as the final fallback.  In most generated
-    # queries the first token is the subject because scene_agent is instructed
-    # to put the visible subject first.
-    if simplified:
-        candidate = simplified[0]
-        if candidate not in queries:
-            queries.append(candidate)
-
-    return queries[:5]
+    candidates = []
+    for api_rank, hit in enumerate(hits):
+        url = hit.get("largeImageURL") or hit.get("webformatURL")
+        if not url:
+            continue
+        candidates.append({
+            "type": "photo",
+            "url": url,
+            "width": hit.get("imageWidth"),
+            "height": hit.get("imageHeight"),
+            "source": "pixabay",
+            "source_id": hit.get("id"),
+            "source_url": hit.get("pageURL"),
+            "matched_query": query,
+            "query_rank": query_rank,
+            "api_rank": api_rank,
+            "metadata_text": f"{query} {hit.get('tags', '')}",
+        })
+    return candidates
 
 
-def get_media(
-    query,
-    used_media_ids=None
-):
+# ============================================================
+# RELEVANCE RANKING
+# ============================================================
+
+def _candidate_score(candidate, scene):
+    """Cheap relevance ranking designed for GitHub-hosted runners.
+
+    No extra paid service/model is used. The scene planner (Ollama) creates
+    several literal queries/keywords; this scorer combines those semantics
+    with provider relevance order, metadata overlap, portrait suitability,
+    and resolution.
     """
-    Find the most relevant free media for a scene.
+    narration_tokens = _tokenize(scene.get("text"))
+    keyword_tokens = _tokenize(" ".join(scene.get("visual_keywords") or []))
+    target_tokens = narration_tokens | keyword_tokens
 
-    Priority:
-      1. Exact/relevant stock video
-      2. Broader stock video
-      3. Exact/relevant stock photo
-      4. Broader stock photo
+    candidate_tokens = _tokenize(candidate.get("metadata_text"))
+    matched_tokens = _tokenize(candidate.get("matched_query"))
 
-    A relevant still image is preferable to unrelated video; video_agent can
-    animate photos using the scene's pan/zoom animation.
-    """
+    overlap = len(target_tokens & candidate_tokens)
+    query_overlap = len(target_tokens & matched_tokens)
 
+    query_rank = int(candidate.get("query_rank") or 0)
+    api_rank = int(candidate.get("api_rank") or 0)
+    width = int(candidate.get("width") or 0)
+    height = int(candidate.get("height") or 0)
+
+    score = 0.0
+    score += overlap * 8.0
+    score += query_overlap * 12.0
+    score += max(0, 24 - query_rank * 5)     # planner's first query is most specific
+    score += max(0, 12 - api_rank * 2)       # provider relevance order still matters
+
+    if height >= width and width > 0:
+        score += 12
+    if width >= 720 or height >= 1280:
+        score += 6
+    if candidate.get("type") == "video":
+        score += 8
+
+    # Slightly prefer Pexels when scores tie because portrait video coverage is better.
+    if candidate.get("source") == "pexels":
+        score += 1
+
+    return score
+
+
+def _dedupe_candidates(candidates, used_media_ids):
+    unique = []
+    seen = set()
+    used_media_ids = used_media_ids or set()
+
+    for candidate in candidates:
+        key = (candidate.get("source"), candidate.get("source_id"))
+        if key != (None, None) and (key in seen or key in used_media_ids):
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def get_media_for_scene(scene, used_media_ids=None):
+    """Search multiple queries/providers and pick the highest-scoring candidate."""
     used_media_ids = used_media_ids if used_media_ids is not None else set()
-    search_queries = normalize_search_queries(query)
+    queries = build_scene_queries(scene)
 
-    print(f"Original media query: {query}")
-    print("Search fallbacks: " + " -> ".join(search_queries))
+    if not queries:
+        return None
 
-    # First exhaust video possibilities across increasingly broad queries.
-    video_finders = (
-        (find_pexels_video, "Pexels video"),
-        (find_pixabay_video, "Pixabay video"),
-    )
+    print("Search queries: " + " | ".join(queries))
 
-    for search_query in search_queries:
-        print(f"Searching video: {search_query}")
+    video_candidates = []
+    for query_rank, query in enumerate(queries):
+        print(f"  Searching video candidates for: {query}")
+        video_candidates.extend(collect_pexels_video_candidates(query, query_rank))
+        video_candidates.extend(collect_pixabay_video_candidates(query, query_rank))
 
-        for finder, label in video_finders:
-            media = finder(search_query, used_media_ids=used_media_ids)
+    video_candidates = _dedupe_candidates(video_candidates, used_media_ids)
+    if video_candidates:
+        for candidate in video_candidates:
+            candidate["relevance_score"] = _candidate_score(candidate, scene)
+        video_candidates.sort(key=lambda item: item["relevance_score"], reverse=True)
+        best = video_candidates[0]
+        print(
+            f"  Selected {best['source']} video, score={best['relevance_score']:.1f}, "
+            f"query='{best['matched_query']}', size={best.get('width')}x{best.get('height')}"
+        )
+        return best
 
-            if media:
-                media["matched_query"] = search_query
-                print(
-                    f"  {label} selected: "
-                    f"{media.get('width')}x{media.get('height')}"
-                )
-                return media
+    # A tightly matching still is better than unrelated motion. MoviePy animates it.
+    photo_candidates = []
+    for query_rank, query in enumerate(queries):
+        print(f"  Searching photo candidates for: {query}")
+        photo_candidates.extend(collect_pexels_photo_candidates(query, query_rank))
+        photo_candidates.extend(collect_pixabay_photo_candidates(query, query_rank))
 
-            print(f"  {label} unavailable.")
+    photo_candidates = _dedupe_candidates(photo_candidates, used_media_ids)
+    if photo_candidates:
+        for candidate in photo_candidates:
+            candidate["relevance_score"] = _candidate_score(candidate, scene)
+        photo_candidates.sort(key=lambda item: item["relevance_score"], reverse=True)
+        best = photo_candidates[0]
+        print(
+            f"  Selected {best['source']} photo, score={best['relevance_score']:.1f}, "
+            f"query='{best['matched_query']}'"
+        )
+        return best
 
-    # If there is no useful video, prefer a closely matching still image over
-    # forcing an unrelated moving clip.
-    photo_finders = (
-        (find_pexels_photo, "Pexels photo"),
-        (find_pixabay_photo, "Pixabay photo"),
-    )
-
-    for search_query in search_queries:
-        print(f"Searching photo: {search_query}")
-
-        for finder, label in photo_finders:
-            media = finder(search_query, used_media_ids=used_media_ids)
-
-            if media:
-                media["matched_query"] = search_query
-                print(
-                    f"  {label} selected: "
-                    f"{media.get('width')}x{media.get('height')}"
-                )
-                return media
-
-            print(f"  {label} unavailable.")
-
-    print("  No media found from any source.")
+    print("  No stock media found for this scene.")
     return None
+
+
+# Backwards-compatible helper used by older callers/tests.
+def get_media(query, used_media_ids=None):
+    return get_media_for_scene(
+        {"text": query, "search": query, "search_queries": [query], "visual_keywords": []},
+        used_media_ids=used_media_ids,
+    )
 
 
 # ============================================================
@@ -551,237 +455,101 @@ def get_media(
 # ============================================================
 
 def download_media(media, filename):
-
     url = media["url"]
-
     temp_filename = filename + ".part"
 
     if os.path.exists(temp_filename):
         os.remove(temp_filename)
-
     if os.path.exists(filename):
         os.remove(filename)
 
     for attempt in range(1, MAX_DOWNLOAD_RETRIES + 1):
-
         try:
-
             print(f"    Download attempt {attempt}/{MAX_DOWNLOAD_RETRIES}")
-
-            with requests.get(
-                url,
-                stream=True,
-                timeout=DOWNLOAD_TIMEOUT,
-            ) as response:
-
+            with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
                 response.raise_for_status()
-
                 expected_size = response.headers.get("Content-Length")
-
-                if expected_size:
-                    expected_size = int(expected_size)
+                expected_size = int(expected_size) if expected_size else None
 
                 with open(temp_filename, "wb") as output:
-
                     for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-
-                        if not chunk:
-                            continue
-
-                        output.write(chunk)
+                        if chunk:
+                            output.write(chunk)
 
             actual_size = os.path.getsize(temp_filename)
-
             print(f"    Downloaded: {actual_size / 1024 / 1024:.2f} MB")
 
-            if expected_size:
-
-                print(f"    Expected: {expected_size / 1024 / 1024:.2f} MB")
-
-                if actual_size != expected_size:
-                    raise IOError(
-                        f"Incomplete download: {actual_size} != {expected_size} bytes"
-                    )
-
+            if expected_size and actual_size != expected_size:
+                raise IOError(f"Incomplete download: {actual_size} != {expected_size} bytes")
             if actual_size < 50_000:
                 raise IOError("Downloaded file is suspiciously small.")
 
             os.replace(temp_filename, filename)
-
             return filename
 
         except Exception as exc:
-
             print(f"    Download failed: {exc}")
-
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
-
             if attempt < MAX_DOWNLOAD_RETRIES:
-
                 wait_time = attempt * 2
-
                 print(f"    Retrying in {wait_time} seconds...")
-
                 time.sleep(wait_time)
 
-    raise RuntimeError(
-        f"Unable to download media after {MAX_DOWNLOAD_RETRIES} attempts."
-    )
+    raise RuntimeError(f"Unable to download media after {MAX_DOWNLOAD_RETRIES} attempts.")
 
 
 # ============================================================
 # DOWNLOAD SCENE MEDIA
 # ============================================================
 
-def download_scene_media(
-    scenes
-):
+def download_scene_media(scenes):
+    """Prepare one best-matching free stock visual per scene.
 
-    Path(
-        CLIPS_DIR
-    ).mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    Flow:
+      Ollama scene planner -> multiple literal search queries ->
+      Pexels + Pixabay candidates -> local relevance ranking -> MoviePy.
+
+    This intentionally has no hosted AI-video dependency, so the twice-daily
+    GitHub Actions workflow can remain free and reliable.
+    """
+    Path(CLIPS_DIR).mkdir(parents=True, exist_ok=True)
 
     media_files = []
-
     used_media_ids = set()
 
-    for index, scene in enumerate(
-        scenes,
-        start=1
-    ):
+    for index, scene in enumerate(scenes, start=1):
+        print("\n--------------------------------")
+        print(f"SCENE {index}")
+        print(f"Narration: {scene.get('text', '')}")
 
-        query = (
-            scene.get(
-                "search"
-            )
-            or
-            scene.get(
-                "visual_query"
-            )
-        )
-
-        if not query:
-
-            print(
-                f"Scene {index}: "
-                "No media query."
-            )
-
-            continue
-
-        print(
-            "\n--------------------------------"
-        )
-
-        print(
-            f"SCENE {index}"
-        )
-
-        print(
-            f"Query: {query}"
-        )
-
-        # get_media() now knows which assets were already selected, so it
-        # can keep Pexels/Pixabay relevance ordering while skipping duplicates.
-        media = get_media(
-            query,
-            used_media_ids=used_media_ids,
-        )
-
-        if media:
-            media_key = (
-                media.get("source"),
-                media.get("source_id"),
-            )
-
-            if media_key != (None, None):
-                used_media_ids.add(media_key)
-
+        media = get_media_for_scene(scene, used_media_ids=used_media_ids)
         if not media:
-
-            print(
-                "Skipping scene."
-            )
-
+            print("No media found. Skipping scene.")
             continue
 
-        extension = (
-            ".mp4"
-            if media["type"]
-            == "video"
-            else ".jpg"
-        )
+        media_key = (media.get("source"), media.get("source_id"))
+        if media_key != (None, None):
+            used_media_ids.add(media_key)
 
-        filename = os.path.join(
-            CLIPS_DIR,
-            f"scene_{index}"
-            f"{extension}"
-        )
+        extension = ".mp4" if media["type"] == "video" else ".jpg"
+        filename = os.path.join(CLIPS_DIR, f"scene_{index}_stock{extension}")
 
         try:
-
-            download_media(
-                media,
-                filename
-            )
-
+            download_media(media, filename)
             media_files.append({
-
-                # Very important.
-                #
-                # Keeps downloaded media linked
-                # to its original scene even if
-                # another scene failed to download.
-
-                "scene_index":
-                    index - 1,
-
-                "file":
-                    filename,
-
-                "type":
-                    media["type"],
-
-                "source":
-                    media.get(
-                        "source"
-                    ),
-
-                "source_url":
-                    media.get(
-                        "source_url"
-                    ),
-
-                "source_id":
-                    media.get(
-                        "source_id"
-                    ),
-
-                "query":
-                    query,
-
-                # Useful for debugging when the exact query had no stock
-                # result and a broader fallback query was used.
-                "matched_query":
-                    media.get(
-                        "matched_query",
-                        query,
-                    ),
+                "scene_index": index - 1,
+                "file": filename,
+                "type": media["type"],
+                "source": media.get("source"),
+                "source_url": media.get("source_url"),
+                "source_id": media.get("source_id"),
+                "query": scene.get("search"),
+                "matched_query": media.get("matched_query"),
+                "relevance_score": media.get("relevance_score"),
             })
-
-            print(
-                f"Scene {index} ready."
-            )
-
+            print(f"Scene {index} ready from {media.get('source')}.")
         except Exception as exc:
-
-            print(
-                f"Scene {index} "
-                f"failed: {exc}"
-            )
+            print(f"Scene {index} download failed: {exc}")
 
     return media_files

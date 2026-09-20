@@ -98,31 +98,20 @@ MIN_MEDIA_SCENES = 6
 
 
 def validate_media_configuration():
-    """
-    Fail fast only when no stock-media provider is configured at all.
-
-    One provider is enough to run the workflow, although using both
-    Pexels and Pixabay gives the retry logic a much better chance of
-    finding relevant footage.
-    """
+    """Validate the free stock-video configuration."""
 
     if not PEXELS_API_KEY and not PIXABAY_API_KEY:
         raise RuntimeError(
-            "No stock-media provider is configured. "
-            "Configure PEXELS_API_KEY and/or PIXABAY_API_KEY in .env."
+            "No stock visual source is configured. Set PEXELS_API_KEY and/or "
+            "PIXABAY_API_KEY in the environment/GitHub Actions secrets."
         )
 
     if not PEXELS_API_KEY:
-        print(
-            "WARNING: PEXELS_API_KEY is not configured. "
-            "Media search will use Pixabay only."
-        )
-
-    if not PIXABAY_API_KEY:
-        print(
-            "WARNING: PIXABAY_API_KEY is not configured. "
-            "Media search will use Pexels only."
-        )
+        print("WARNING: PEXELS_API_KEY missing; using Pixabay only.")
+    elif not PIXABAY_API_KEY:
+        print("WARNING: PIXABAY_API_KEY missing; using Pexels only.")
+    else:
+        print("Pexels + Pixabay configured for multi-candidate visual search.")
 
 
 def _clear_downloaded_media():
@@ -142,11 +131,11 @@ def generate_content_with_media(
     max_script_retries=MAX_SCRIPT_RETRIES_PER_TOPIC,
 ):
     """
-    Build script -> scenes -> stock media for one topic.
+    Build script -> smart scene searches -> ranked free stock media for one topic.
 
-    Voice and captions are deliberately NOT generated here. They are
-    expensive compared with checking stock-media availability and should
-    only run after a usable visual plan has been found.
+    Voice and captions are deliberately NOT generated here. Visual generation
+    runs first so narration/caption work is only performed after enough scene
+    media has been prepared.
     """
 
     last_error = None
@@ -227,19 +216,21 @@ def generate_content_with_media(
 
             for scene in scenes:
                 print(f"\nScene {scene['scene']}")
-                print(f"Visual: {scene.get('search')}")
+                print(f"Primary search: {scene.get('search')}")
+                print(f"Search alternatives: {scene.get('search_queries')}")
+                print(f"Visual keywords: {scene.get('visual_keywords')}")
                 print(f"Animation: {scene.get('animation')}")
 
             # ----------------------------------------------------
-            # MEDIA AVAILABILITY
+            # VISUAL GENERATION / FALLBACK
             # ----------------------------------------------------
-            #
-            # Search BEFORE TTS/Whisper. If the stock libraries do not
-            # contain enough usable media, retry the content without
-            # wasting time creating narration and captions.
+            # Search several highly specific Pexels/Pixabay queries for each scene,
+            # collect multiple candidates, then rank them locally for narration fit.
+            # Visuals are prepared before TTS/Whisper so a failed media attempt
+            # does not waste narration/caption work.
             # ----------------------------------------------------
             print(
-                "\n[4/8] Searching and downloading media..."
+                "\n[4/8] Searching and ranking free stock visuals for each scene..."
             )
 
             _clear_downloaded_media()
@@ -541,13 +532,13 @@ def main():
 
         if args.topic:
             raise RuntimeError(
-                "Unable to find enough stock media for the requested "
+                "Unable to prepare enough scene visuals for the requested "
                 f"topic after {MAX_SCRIPT_RETRIES_PER_TOPIC} "
                 "different script attempts."
             )
 
         raise RuntimeError(
-            "Unable to generate a usable Short after "
+            "Unable to generate a usable Short with AI-video/stock visuals after "
             f"{MAX_TOPIC_RETRIES} topic attempts and "
             f"{MAX_SCRIPT_RETRIES_PER_TOPIC} script attempts "
             "per topic."

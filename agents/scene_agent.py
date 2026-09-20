@@ -186,6 +186,20 @@ SCENE_SCHEMA = {
                 "type": "string"
             },
 
+            "search_queries": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 5,
+                "items": {"type": "string"}
+            },
+
+            "visual_keywords": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 8,
+                "items": {"type": "string"}
+            },
+
             "animation": {
 
                 "type": "string",
@@ -199,6 +213,8 @@ SCENE_SCHEMA = {
             "scene",
             "text",
             "search",
+            "search_queries",
+            "visual_keywords",
             "animation",
         ],
     },
@@ -353,6 +369,18 @@ def split_narration_into_scenes(
             "search":
                 topic,
 
+            "search_queries": [
+                topic,
+                " ".join(text.split()[:5]) or topic,
+                " ".join(text.split()[-5:]) or topic,
+            ],
+
+            "visual_keywords": [
+                word.strip(".,!?;:\"'()[]{}").lower()
+                for word in text.split()
+                if len(word.strip(".,!?;:\"'()[]{}")) > 3
+            ][:8] or [topic],
+
             "animation":
                 ANIMATIONS[
                     index
@@ -414,6 +442,43 @@ def _validate_scenes(
             ) or ""
         ).strip()
 
+        raw_queries = scene.get("search_queries") or []
+        if not isinstance(raw_queries, list):
+            raw_queries = [raw_queries]
+
+        normalized_queries = []
+        for query in [scene["search"], *raw_queries]:
+            query = " ".join(str(query or "").split()).strip()
+            if query and query.lower() not in {q.lower() for q in normalized_queries}:
+                normalized_queries.append(query[:100])
+
+        if not normalized_queries:
+            normalized_queries = [scene["text"][:100] or "educational topic"]
+
+        while len(normalized_queries) < 3:
+            words = scene["text"].split()
+            candidate = " ".join(words[: min(3 + len(normalized_queries), len(words))]).strip()
+            candidate = candidate or normalized_queries[0]
+            if candidate.lower() not in {q.lower() for q in normalized_queries}:
+                normalized_queries.append(candidate[:100])
+            else:
+                normalized_queries.append(f"{normalized_queries[0]} detail {len(normalized_queries)+1}"[:100])
+
+        scene["search"] = normalized_queries[0]
+        scene["search_queries"] = normalized_queries[:5]
+
+        raw_keywords = scene.get("visual_keywords") or []
+        if not isinstance(raw_keywords, list):
+            raw_keywords = [raw_keywords]
+        keywords = []
+        for keyword in raw_keywords:
+            keyword = " ".join(str(keyword or "").split()).strip().lower()
+            if keyword and keyword not in keywords:
+                keywords.append(keyword[:40])
+        if not keywords:
+            keywords = [word.lower().strip(".,!?;:\"'()[]{}") for word in scene["search"].split()]
+        scene["visual_keywords"] = [k for k in keywords if k][:8] or ["subject"]
+
         # CONFLICT DETECTION: Validate search against narration
         if narration_moments:
             
@@ -449,6 +514,11 @@ def _validate_scenes(
                 )
                 
                 scene["search"] = fixed
+                existing_queries = scene.get("search_queries") or []
+                scene["search_queries"] = [
+                    fixed,
+                    *[q for q in existing_queries if str(q).lower() != fixed.lower()]
+                ][:5]
 
         animation = (
             scene.get(
@@ -542,17 +612,23 @@ Create exactly {SCENE_COUNT} scenes in the same order as the narration moments.
 Each scene MUST contain exactly these fields:
 - scene: integer from 1 to {SCENE_COUNT}
 - text: narration text for that moment
-- search: literal 2-6 word Pexels/Pixabay search phrase
+- search: the best literal 2-6 word Pexels/Pixabay search phrase
+- search_queries: 3-5 different literal stock-video search phrases, most specific first
+- visual_keywords: 3-8 visible nouns/actions/attributes that MUST be represented if possible
 - animation: one of zoom_in, zoom_out, pan_left, pan_right, static
 
-SEARCH RULES:
-- Show what is literally being spoken about in that moment.
-- Prefer concrete visible nouns and actions.
-- Include environment only when important.
-- Every search query must be different.
-- Do not use abstract phrases such as amazing discovery, science concept,
-  interesting nature, cinematic footage, or stock footage.
-- Do not invent subjects that are absent from the narration.
+STOCK SEARCH RULES:
+- The visuals must show what is literally being spoken about in that exact narration moment.
+- Prefer concrete visible subjects + actions: e.g. "octopus opening jar", not "octopus intelligence".
+- Put the most important visible subject first in each query.
+- Use 2-6 words per query. Keep queries natural for Pexels/Pixabay search.
+- Make search_queries meaningfully different: subject+action, subject+environment, close subject detail.
+- search MUST equal the best/most-specific item from search_queries.
+- visual_keywords should contain only things a viewer could actually see.
+- Avoid abstract wording such as amazing discovery, science concept, interesting nature,
+  cinematic footage, stock footage, knowledge, intelligence, importance, or mystery.
+- Do not invent subjects, places, actions, colors, or environments absent from the narration.
+- Prefer realistic footage that can exist in a stock-video library.
 
 Return ONLY the JSON array.
 Do not add Markdown fences.
@@ -639,6 +715,17 @@ Do not write anything before or after the JSON.
                 "search_query",
                 scene["search"]
             ) or topic
+
+            scene["search_queries"] = [
+                scene["search"],
+                " ".join(scene["text"].split()[:5]) or scene["search"],
+                " ".join(scene["text"].split()[-5:]) or scene["search"],
+            ]
+            scene["visual_keywords"] = [
+                word.lower().strip(".,!?;:\"'()[]{}")
+                for word in scene["search"].split()
+                if len(word.strip(".,!?;:\"'()[]{}")) > 2
+            ][:8] or [topic]
 
     # Ensure duplicate fallback queries do not fail validation.
     seen = set()
