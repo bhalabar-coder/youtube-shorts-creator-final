@@ -3,6 +3,7 @@ import os
 import random
 import re
 import time
+from difflib import SequenceMatcher
 
 import requests
 
@@ -96,91 +97,56 @@ def add_to_history(
 # ============================================================
 
 def pick_category(history):
-    """
-    Pick a category, preferring ones with good performance history.
-    
-    Strategy:
-    1. Never pick a category used in the last 6 videos (variety)
-    2. If analytics available, weight by performance
-    3. Fallback to random if no analytics
-    """
-
+    """Choose a category using a 60/25/15 explore/exploit strategy."""
     recent_categories = [
         entry.get("category")
         for entry in history[-6:]
         if entry.get("category")
     ]
+    fresh = [c for c in TOPIC_CATEGORIES if c not in recent_categories]
+    candidates = fresh if fresh else list(TOPIC_CATEGORIES)
 
-    fresh = [
-        category
-        for category in TOPIC_CATEGORIES
-        if category not in recent_categories
-    ]
+    try:
+        stats = get_performance_stats() if get_performance_stats else None
+    except Exception as exc:
+        print(f"Could not use performance weighting: {exc}")
+        stats = None
 
-    candidates = (
-        fresh if fresh else TOPIC_CATEGORIES
+    by_category = (stats or {}).get("by_category") or {}
+    ranked = sorted(
+        [
+            (category, by_category[category].get("performance_score", 1.0))
+            for category in candidates
+            if category in by_category
+        ],
+        key=lambda item: item[1],
+        reverse=True,
     )
 
-    # Try to use performance data if available
-    if get_performance_stats:
-        
-        try:
-            
-            stats = get_performance_stats()
-            
-            if stats and stats.get("by_category"):
-                
-                # Weight by average views per category
-                weights = {}
-                
-                for category in candidates:
-                    
-                    if category in stats["by_category"]:
-                        
-                        cat_data = (
-                            stats["by_category"][category]
-                        )
-                        
-                        count = cat_data.get("count", 0)
-                        
-                        if count > 0:
-                            
-                            avg_views = (
-                                cat_data["views"] / count
-                            )
-                            
-                            weights[category] = (
-                                avg_views
-                            )
-                    
-                    else:
-                        # Categories with no data
-                        # yet get neutral weight
-                        weights[category] = 100
-                
-                # Random choice weighted by views
-                if weights:
-                    
-                    return random.choices(
-                        list(weights.keys()),
-                        weights=list(
-                            weights.values()
-                        ),
-                        k=1
-                    )[0]
-        
-        except Exception as e:
-            
-            # Analytics failed, fall back to random
-            print(
-                f"Could not use performance "
-                f"weighting: {e}"
-            )
+    if not ranked:
+        return random.choice(candidates)
 
-    # Fallback: random choice
-    return random.choice(
-        candidates
-    )
+    roll = random.random()
+
+    # 60%: proven winners, but still rotate among the strongest categories.
+    if roll < 0.60:
+        top_count = max(1, min(8, len(ranked)))
+        top = ranked[:top_count]
+        return random.choices(
+            [item[0] for item in top],
+            weights=[max(item[1], 0.05) for item in top],
+            k=1,
+        )[0]
+
+    # 25%: adjacent/mid-performing known categories to preserve variety.
+    if roll < 0.85:
+        known = [item[0] for item in ranked]
+        middle = known[max(1, len(known) // 4): max(2, (len(known) * 3) // 4)]
+        return random.choice(middle or known)
+
+    # 15%: exploration, favor categories with little/no performance history.
+    unexplored = [c for c in candidates if c not in by_category]
+    return random.choice(unexplored or candidates)
 
 
 # ============================================================
@@ -231,6 +197,99 @@ def _clean_candidate(line):
 
     return line.strip()
 
+
+# ============================================================
+# DUPLICATE / VISUALABILITY QUALITY
+# ============================================================
+
+TOPIC_SIMILARITY_THRESHOLD = 0.78
+MIN_TOPIC_VISUALABILITY = 65
+
+
+def _topic_tokens(text):
+    stopwords = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "how", "in", "is", "it", "of", "on", "or", "the", "this", "to",
+        "what", "when", "where", "why", "with", "your", "you",
+    }
+    return {
+        token for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+        if len(token) > 2 and token not in stopwords
+    }
+
+
+def topic_similarity(left, right):
+    """Conservative local similarity used to prevent near-duplicate topics."""
+    left_text = " ".join(sorted(_topic_tokens(left)))
+    right_text = " ".join(sorted(_topic_tokens(right)))
+    if not left_text or not right_text:
+        return 0.0
+
+    left_tokens = set(left_text.split())
+    right_tokens = set(right_text.split())
+    union = left_tokens | right_tokens
+    jaccard = len(left_tokens & right_tokens) / max(len(union), 1)
+    sequence = SequenceMatcher(None, left_text, right_text).ratio()
+    return max(jaccard, sequence * 0.90)
+
+
+def filter_similar_candidates(candidates, recent_topics):
+    accepted = []
+    for candidate in candidates:
+        max_similarity = max(
+            (topic_similarity(candidate, previous) for previous in recent_topics),
+            default=0.0,
+        )
+        if max_similarity >= TOPIC_SIMILARITY_THRESHOLD:
+            print(
+                f"Skipping near-duplicate topic ({max_similarity:.0%} similar): "
+                f"{candidate}"
+            )
+            continue
+        accepted.append(candidate)
+    return accepted
+
+
+def score_visualability(candidates):
+    """Score how realistically each topic can be illustrated with stock footage/photos."""
+    if not candidates:
+        return {}
+
+    numbered = "\n".join(
+        f"{index}. {topic}" for index, topic in enumerate(candidates, start=1)
+    )
+    prompt = f"""
+Score each YouTube Shorts topic from 0 to 100 for VISUALABILITY using real
+stock video/photos from libraries such as Pexels or Pixabay.
+
+High score: concrete people, animals, places, machines, nature, space objects,
+visible experiments, actions, or objects that can be shown directly.
+Low score: abstract ideas, internal thoughts, invisible mechanisms, or topics
+that would mostly require custom animation.
+
+Topics:
+{numbered}
+
+Return exactly one line per topic in this format:
+NUMBER|SCORE
+
+No explanation.
+"""
+    try:
+        raw = _ollama(prompt)
+        scores = {}
+        for line in raw.splitlines():
+            match = re.search(r"^\s*(\d+)\s*\|\s*(\d{1,3})\s*$", line)
+            if not match:
+                continue
+            index = int(match.group(1)) - 1
+            score = max(0, min(100, int(match.group(2))))
+            if 0 <= index < len(candidates):
+                scores[candidates[index]] = score
+        return {candidate: scores.get(candidate, 75) for candidate in candidates}
+    except Exception as exc:
+        print(f"Could not score topic visualability: {exc}")
+        return {candidate: 75 for candidate in candidates}
 
 # ============================================================
 # GENERATE MULTIPLE CANDIDATES
@@ -440,16 +499,35 @@ def generate_topic(
                 )
             )
 
+            candidates = filter_similar_candidates(
+                candidates,
+                recent_topics,
+            )
+
             if len(candidates) < 2:
 
                 raise ValueError(
                     "Only "
                     f"{len(candidates)} "
-                    "usable topic candidate(s) returned."
+                    "non-duplicate topic candidate(s) returned."
                 )
 
+            visualability_scores = score_visualability(candidates)
+            visual_candidates = [
+                candidate for candidate in candidates
+                if visualability_scores.get(candidate, 0) >= MIN_TOPIC_VISUALABILITY
+            ]
+
+            if len(visual_candidates) < 2:
+                ranked_visual = sorted(
+                    candidates,
+                    key=lambda item: visualability_scores.get(item, 0),
+                    reverse=True,
+                )
+                visual_candidates = ranked_visual[:max(2, min(len(ranked_visual), 3))]
+
             topic = select_best_topic(
-                candidates,
+                visual_candidates,
                 category
             )
 
@@ -472,8 +550,9 @@ def generate_topic(
                     else ""
                 )
 
+                visual_score = visualability_scores.get(candidate, 0)
                 print(
-                    f"  - {candidate}"
+                    f"  - {candidate} [visualability={visual_score}%]"
                     f"{marker}"
                 )
 

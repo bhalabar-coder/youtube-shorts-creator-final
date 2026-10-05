@@ -377,6 +377,86 @@ def _candidate_score(candidate, scene):
     return score
 
 
+
+def _visual_match_score(candidate, scene):
+    """Convert retrieval relevance into a conservative 0-100 narration/visual match score."""
+    narration_tokens = _tokenize(scene.get("text"))
+    keyword_tokens = _tokenize(" ".join(scene.get("visual_keywords") or []))
+    target_tokens = narration_tokens | keyword_tokens
+    candidate_tokens = _tokenize(
+        f"{candidate.get('metadata_text', '')} {candidate.get('matched_query', '')}"
+    )
+
+    if not target_tokens:
+        lexical_coverage = 0.0
+    else:
+        lexical_coverage = len(target_tokens & candidate_tokens) / len(target_tokens)
+
+    query_rank = int(candidate.get("query_rank") or 0)
+    api_rank = int(candidate.get("api_rank") or 0)
+    query_quality = max(0.0, 1.0 - query_rank * 0.13)
+    provider_quality = max(0.0, 1.0 - api_rank * 0.06)
+    portrait_bonus = 1.0 if int(candidate.get("height") or 0) >= int(candidate.get("width") or 0) > 0 else 0.65
+    motion_bonus = 1.0 if candidate.get("type") == "video" else 0.88
+
+    # Search-query specificity is intentionally weighted heavily because provider
+    # metadata is sparse. The score is a quality gate, not a claim of computer-vision certainty.
+    score = 100.0 * (
+        lexical_coverage * 0.20
+        + query_quality * 0.55
+        + provider_quality * 0.10
+        + portrait_bonus * 0.08
+        + motion_bonus * 0.07
+    )
+    return round(max(0.0, min(score, 100.0)), 1)
+
+
+def evaluate_visual_narration_match(media_files, scenes):
+    """Return weighted overall match, hook match, minimum scene match and per-scene detail."""
+    if not media_files:
+        return {
+            "overall_score": 0.0,
+            "hook_score": 0.0,
+            "min_scene_score": 0.0,
+            "scene_scores": [],
+        }
+
+    scene_scores = []
+    weighted_total = 0.0
+    total_weight = 0.0
+
+    for item in media_files:
+        scene_index = int(item.get("scene_index", 0))
+        score = float(item.get("visual_match_score") or 0.0)
+        if scene_index == 0:
+            weight = 2.0
+        elif scene_index == 1:
+            weight = 1.5
+        else:
+            weight = 1.0
+
+        weighted_total += score * weight
+        total_weight += weight
+        scene_scores.append({
+            "scene": scene_index + 1,
+            "score": score,
+            "query": item.get("matched_query"),
+        })
+
+    hook_score = next(
+        (entry["score"] for entry in scene_scores if entry["scene"] == 1),
+        0.0,
+    )
+    minimum = min((entry["score"] for entry in scene_scores), default=0.0)
+    overall = weighted_total / total_weight if total_weight else 0.0
+
+    return {
+        "overall_score": round(overall, 1),
+        "hook_score": round(hook_score, 1),
+        "min_scene_score": round(minimum, 1),
+        "scene_scores": scene_scores,
+    }
+
 def _dedupe_candidates(candidates, used_media_ids):
     unique = []
     seen = set()
@@ -411,7 +491,8 @@ def get_media_for_scene(scene, used_media_ids=None):
     if video_candidates:
         for candidate in video_candidates:
             candidate["relevance_score"] = _candidate_score(candidate, scene)
-        video_candidates.sort(key=lambda item: item["relevance_score"], reverse=True)
+            candidate["visual_match_score"] = _visual_match_score(candidate, scene)
+        video_candidates.sort(key=lambda item: (item["visual_match_score"], item["relevance_score"]), reverse=True)
         best = video_candidates[0]
         print(
             f"  Selected {best['source']} video, score={best['relevance_score']:.1f}, "
@@ -430,7 +511,8 @@ def get_media_for_scene(scene, used_media_ids=None):
     if photo_candidates:
         for candidate in photo_candidates:
             candidate["relevance_score"] = _candidate_score(candidate, scene)
-        photo_candidates.sort(key=lambda item: item["relevance_score"], reverse=True)
+            candidate["visual_match_score"] = _visual_match_score(candidate, scene)
+        photo_candidates.sort(key=lambda item: (item["visual_match_score"], item["relevance_score"]), reverse=True)
         best = photo_candidates[0]
         print(
             f"  Selected {best['source']} photo, score={best['relevance_score']:.1f}, "
@@ -547,9 +629,118 @@ def download_scene_media(scenes):
                 "query": scene.get("search"),
                 "matched_query": media.get("matched_query"),
                 "relevance_score": media.get("relevance_score"),
+                "visual_match_score": media.get("visual_match_score", 0.0),
             })
             print(f"Scene {index} ready from {media.get('source')}.")
         except Exception as exc:
             print(f"Scene {index} download failed: {exc}")
 
     return media_files
+
+
+# ============================================================
+# WEAK-SCENE RETRY
+# ============================================================
+
+def retry_weak_scene_media(
+    media_files,
+    scenes,
+    minimum_score=75.0,
+    max_retries=2,
+):
+    """Retry only weak/missing scenes instead of regenerating the full script.
+
+    Existing strong scenes stay untouched. A replacement is accepted only when
+    its visual-match score is higher than the current scene score.
+    """
+    Path(CLIPS_DIR).mkdir(parents=True, exist_ok=True)
+
+    by_scene = {int(item.get("scene_index", -1)): dict(item) for item in (media_files or [])}
+    used_media_ids = {
+        (item.get("source"), item.get("source_id"))
+        for item in by_scene.values()
+        if (item.get("source"), item.get("source_id")) != (None, None)
+    }
+
+    for scene_index, original_scene in enumerate(scenes):
+        current = by_scene.get(scene_index)
+        current_score = float((current or {}).get("visual_match_score") or 0.0)
+        if current and current_score >= minimum_score:
+            continue
+
+        print(
+            f"\nRetrying weak scene {scene_index + 1}: "
+            f"current match={current_score:.1f}%"
+        )
+
+        best_item = current
+        best_score = current_score
+
+        for retry in range(1, max_retries + 1):
+            scene = dict(original_scene)
+            base_queries = build_scene_queries(scene)
+            narration_tokens = list(_tokenize(scene.get("text")))[:4]
+            extra_queries = []
+            if narration_tokens:
+                literal = " ".join(narration_tokens)
+                extra_queries.extend([
+                    f"{literal} close up real footage",
+                    f"{literal} documentary footage",
+                ])
+            scene["search_queries"] = list(dict.fromkeys(base_queries + extra_queries))[:MAX_QUERY_COUNT]
+
+            candidate = get_media_for_scene(scene, used_media_ids=used_media_ids)
+            if not candidate:
+                continue
+
+            candidate_score = float(candidate.get("visual_match_score") or 0.0)
+            print(
+                f"  Weak-scene retry {retry}/{max_retries}: "
+                f"candidate match={candidate_score:.1f}%"
+            )
+            if candidate_score <= best_score:
+                continue
+
+            extension = ".mp4" if candidate["type"] == "video" else ".jpg"
+            filename = os.path.join(
+                CLIPS_DIR,
+                f"scene_{scene_index + 1}_retry_{retry}{extension}",
+            )
+
+            try:
+                download_media(candidate, filename)
+            except Exception as exc:
+                print(f"  Replacement download failed: {exc}")
+                continue
+
+            if best_item and best_item.get("file") and best_item.get("file") != filename:
+                try:
+                    if os.path.exists(best_item["file"]):
+                        os.remove(best_item["file"])
+                except Exception:
+                    pass
+
+            best_item = {
+                "scene_index": scene_index,
+                "file": filename,
+                "type": candidate["type"],
+                "source": candidate.get("source"),
+                "source_url": candidate.get("source_url"),
+                "source_id": candidate.get("source_id"),
+                "query": original_scene.get("search"),
+                "matched_query": candidate.get("matched_query"),
+                "relevance_score": candidate.get("relevance_score"),
+                "visual_match_score": candidate_score,
+            }
+            best_score = candidate_score
+            media_key = (candidate.get("source"), candidate.get("source_id"))
+            if media_key != (None, None):
+                used_media_ids.add(media_key)
+
+            if best_score >= minimum_score:
+                break
+
+        if best_item:
+            by_scene[scene_index] = best_item
+
+    return [by_scene[index] for index in sorted(by_scene)]

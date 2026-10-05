@@ -16,6 +16,12 @@ from config import (
     HOOK_HISTORY_SIZE,
 )
 
+try:
+    from agents.analytics_agent import get_performance_stats
+except ImportError:
+    get_performance_stats = None
+
+
 
 # ============================================================
 # HOOK STYLES
@@ -183,33 +189,19 @@ def save_hook_history(
         )
 
 
-def pick_hook_style(
-    history,
-    exclude_keys
-):
+def pick_hook_style(history, exclude_keys):
+    recent_keys = [entry.get("style") for entry in history[-4:]] + list(exclude_keys)
+    fresh = [style for style in HOOK_STYLES if style[0] not in recent_keys]
+    pool = fresh if fresh else HOOK_STYLES
 
-    recent_keys = (
-        [
-            entry.get("style")
-            for entry in history[-4:]
-        ]
-        +
-        list(
-            exclude_keys
-        )
-    )
-
-    fresh = [
-        style
-        for style in HOOK_STYLES
-        if style[0] not in recent_keys
-    ]
-
-    return random.choice(
-        fresh
-        if fresh
-        else HOOK_STYLES
-    )
+    try:
+        stats = get_performance_stats() if get_performance_stats else None
+        by_hook = (stats or {}).get("by_hook_style") or {}
+        weights = [max(by_hook.get(style[0], {}).get("performance_score", 1.0), 0.05) for style in pool]
+        return random.choices(pool, weights=weights, k=1)[0]
+    except Exception as exc:
+        print(f"Could not use hook performance weighting: {exc}")
+        return random.choice(pool)
 
 
 # ============================================================

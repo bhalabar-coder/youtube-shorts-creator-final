@@ -15,12 +15,17 @@ from agents.scene_agent import (
     generate_scene_plan,
     generate_scene_plan_with_sync,
 )
-from agents.media_agent import download_scene_media
+from agents.media_agent import (
+    download_scene_media,
+    evaluate_visual_narration_match,
+    retry_weak_scene_media,
+)
 from agents.voice_agent import generate_voice
 from agents.caption_agent import create_captions
 from agents.video_agent import build_video
 from agents.youtube_agent import upload_video, post_first_comment
 from agents.analytics_agent import add_to_performance_history
+from agents.quality_agent import inspect_rendered_video, calculate_pre_upload_quality
 
 from config import (
     OUTPUT_AUDIO,
@@ -95,6 +100,9 @@ FOLLOW_CTA = "\U0001F514 Follow for a new fact every day."
 MAX_SCRIPT_RETRIES_PER_TOPIC = 3
 MAX_TOPIC_RETRIES = 3
 MIN_MEDIA_SCENES = 6
+MIN_OVERALL_VISUAL_MATCH = 90.0
+MIN_HOOK_VISUAL_MATCH = 90.0
+MIN_SCENE_VISUAL_MATCH = 75.0
 
 
 def validate_media_configuration():
@@ -244,24 +252,77 @@ def generate_content_with_media(
             )
 
             if media_count >= MIN_MEDIA_SCENES:
-                print(
-                    "\nSUCCESS: Sufficient relevant media found. "
-                    "Continuing with narration and rendering."
+                match_result = evaluate_visual_narration_match(media_files, scenes)
+                overall_match = match_result["overall_score"]
+                hook_match = match_result["hook_score"]
+                min_scene_match = match_result["min_scene_score"]
+
+                print("\nVisual/narration match scores:")
+                for row in match_result["scene_scores"]:
+                    print(
+                        f"  Scene {row['scene']}: {row['score']:.1f}% "
+                        f"(query: {row.get('query')})"
+                    )
+                print(f"  Overall weighted match: {overall_match:.1f}%")
+                print(f"  Hook scene match: {hook_match:.1f}%")
+                print(f"  Lowest scene match: {min_scene_match:.1f}%")
+
+                # Retry only weak scenes before regenerating the full script.
+                initial_passed = (
+                    overall_match >= MIN_OVERALL_VISUAL_MATCH
+                    and hook_match >= MIN_HOOK_VISUAL_MATCH
+                    and min_scene_match >= MIN_SCENE_VISUAL_MATCH
                 )
 
-                return {
-                    "topic": topic,
-                    "category": category,
-                    "script": script,
-                    "hook_style": hook_style,
-                    "scenes": scenes,
-                    "media_files": media_files,
-                }
+                if not initial_passed:
+                    print("\nRetrying only weak scene visuals before script regeneration...")
+                    media_files = retry_weak_scene_media(
+                        media_files,
+                        scenes,
+                        minimum_score=MIN_OVERALL_VISUAL_MATCH,
+                        max_retries=2,
+                    )
+                    match_result = evaluate_visual_narration_match(media_files, scenes)
+                    overall_match = match_result["overall_score"]
+                    hook_match = match_result["hook_score"]
+                    min_scene_match = match_result["min_scene_score"]
+                    print(
+                        "After weak-scene retry: "
+                        f"overall={overall_match:.1f}%, "
+                        f"hook={hook_match:.1f}%, "
+                        f"minimum={min_scene_match:.1f}%"
+                    )
 
-            print(
-                f"\nOnly {media_count} scene(s) had media; "
-                f"at least {MIN_MEDIA_SCENES} are required."
-            )
+                quality_passed = (
+                    overall_match >= MIN_OVERALL_VISUAL_MATCH
+                    and hook_match >= MIN_HOOK_VISUAL_MATCH
+                    and min_scene_match >= MIN_SCENE_VISUAL_MATCH
+                )
+
+                if quality_passed:
+                    print(
+                        "\nSUCCESS: Media quantity and visual/narration "
+                        "quality gate passed."
+                    )
+                    return {
+                        "topic": topic,
+                        "category": category,
+                        "script": script,
+                        "hook_style": hook_style,
+                        "scenes": scenes,
+                        "media_files": media_files,
+                        "visual_match": match_result,
+                    }
+
+                print(
+                    "\nVisual/narration quality gate failed. "
+                    "Retrying content before upload."
+                )
+            else:
+                print(
+                    f"\nOnly {media_count} scene(s) had media; "
+                    f"at least {MIN_MEDIA_SCENES} are required."
+                )
 
             if script_attempt < max_script_retries:
                 print(
@@ -360,22 +421,27 @@ def build_full_description(
     return "\n\n".join(parts).strip()[:5000]
 
 
-def build_first_comment(
-    topic
-):
-    """
-    Posted immediately after upload to seed engagement before real
-    viewers arrive. Kept as a simple template (no LLM call) so it
-    never becomes a point of failure in the pipeline.
-    """
-
-    templates = [
-        f"What's the wildest thing you know about {topic}? \U0001F447",
-        "Which part surprised you most — timestamp it below! \U0001F440",
-        f"Rate this {topic} fact 1-10 in the comments \U0001F447",
+def build_first_comment(topic, script=None):
+    """Create a topic-specific comment prompt without another LLM call."""
+    spoken = clean_youtube_description(script or "")
+    sentences = [
+        item.strip()
+        for item in re.split(r"(?<=[.!?])\s+", spoken)
+        if item.strip()
     ]
 
-    return random.choice(templates)
+    # Prefer the payoff/fact near the end rather than a generic CTA.
+    payoff = sentences[-1] if sentences else topic
+    payoff = re.sub(r"[#*_]", "", payoff).strip()
+    if len(payoff) > 120:
+        payoff = payoff[:117].rsplit(" ", 1)[0] + "..."
+
+    templates = [
+        f"{payoff} What do you think — surprising or expected? 👇",
+        f"If you had to explain this {topic} fact to a friend, what part would you mention first? 👇",
+        f"Which part of this {topic} story surprised you most? 👀",
+    ]
+    return random.choice(templates)[:9999]
 
 
 def build_tags(
@@ -554,6 +620,7 @@ def main():
     hook_style = content_result["hook_style"]
     scenes = content_result["scenes"]
     media_files = content_result["media_files"]
+    visual_match = content_result.get("visual_match", {})
 
     # ========================================================
     # VOICE
@@ -588,6 +655,34 @@ def main():
         OUTPUT_AUDIO,
         OUTPUT_VIDEO,
     )
+
+    # ========================================================
+    # FINAL RENDER / PRE-UPLOAD QUALITY GATE
+    # ========================================================
+
+    technical_qc = inspect_rendered_video(OUTPUT_VIDEO)
+    pre_upload_quality = calculate_pre_upload_quality(
+        visual_match,
+        media_count=len(media_files),
+        scene_count=len(scenes),
+        technical_qc=technical_qc,
+    )
+
+    print(
+        "Final quality score: "
+        f"{pre_upload_quality['overall_score']:.1f}% "
+        f"(technical={pre_upload_quality['technical_score']:.1f}%)"
+    )
+
+    if technical_qc.get("issues"):
+        for issue in technical_qc["issues"]:
+            print(f"  QC issue: {issue}")
+
+    if not pre_upload_quality["passed"]:
+        raise RuntimeError(
+            "Final rendered video failed the pre-upload quality gate. "
+            f"Score={pre_upload_quality['overall_score']:.1f}%"
+        )
 
     # ========================================================
     # YOUTUBE
@@ -630,7 +725,7 @@ def main():
 
         post_first_comment(
             response["id"],
-            build_first_comment(topic),
+            build_first_comment(topic, script),
         )
 
         video_id = response["id"]
@@ -643,6 +738,10 @@ def main():
             category,
             hook_style,
             narration_length,
+            visual_match_score=visual_match.get("overall_score"),
+            scene_count=len(scenes),
+            video_duration=technical_qc.get("duration"),
+            quality_score=pre_upload_quality.get("overall_score"),
         )
 
         print(
