@@ -329,6 +329,11 @@ def _clean_spoken_text(
     return result
 
 
+def clean_spoken_text(result):
+    """Public safeguard for narration before scenes and voice generation."""
+    return _clean_spoken_text(result)
+
+
 # ============================================================
 # GENERATE SCRIPT
 # ============================================================

@@ -8,6 +8,7 @@ from agents.topic_agent import generate_topic
 from agents.script_agent import (
     generate_script,
     review_script,
+    clean_spoken_text,
     generate_title,
     break_script_into_scenes,
 )
@@ -165,7 +166,7 @@ def generate_content_with_media(
             print("\n[2/8] Generating script...")
 
             script, hook_style = generate_script(topic)
-            script = review_script(topic, script)
+            script = clean_spoken_text(review_script(topic, script))
 
             if not script or not script.strip():
                 raise ValueError("Generated script is empty.")
@@ -625,6 +626,11 @@ def main():
     # ========================================================
     # VOICE
     # ========================================================
+
+    # Final safeguard: do not pass model commentary into TTS.
+    script = clean_spoken_text(script)
+    if not script:
+        raise ValueError("Narration is empty after cleaning.")
 
     print("\n[5/8] Generating narration...")
 
