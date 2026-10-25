@@ -11,7 +11,7 @@ from config import (
 
 
 GRAPH_BASE_URL = (
-    f"https://graph.instagram.com/"
+    f"https://graph.facebook.com/"
     f"{INSTAGRAM_GRAPH_API_VERSION}"
 )
 
@@ -22,9 +22,14 @@ UPLOAD_BASE_URL = (
 )
 
 REQUEST_TIMEOUT = 120
+UPLOAD_TIMEOUT = 300
 PROCESSING_TIMEOUT = 600
 POLL_INTERVAL = 10
 
+
+# ============================================================
+# CONFIG VALIDATION
+# ============================================================
 
 def _validate_config():
 
@@ -38,8 +43,17 @@ def _validate_config():
             "INSTAGRAM_ACCESS_TOKEN is not configured."
         )
 
+    if not INSTAGRAM_GRAPH_API_VERSION:
+        raise RuntimeError(
+            "INSTAGRAM_GRAPH_API_VERSION is not configured."
+        )
 
-def _raise_for_instagram_error(response):
+
+# ============================================================
+# INSTAGRAM ERROR HANDLING
+# ============================================================
+
+def _handle_response(response):
 
     try:
         data = response.json()
@@ -47,35 +61,77 @@ def _raise_for_instagram_error(response):
         data = None
 
     if response.ok:
+
+        if isinstance(data, dict) and data.get("error"):
+
+            error = data["error"]
+
+            raise RuntimeError(
+                "Instagram API error: "
+                f"{error.get('message')} "
+                f"(code={error.get('code')}, "
+                f"subcode={error.get('error_subcode')})"
+            )
+
         return data
 
     if isinstance(data, dict):
+
         error = data.get("error", {})
-
-        message = error.get(
-            "message",
-            response.text,
-        )
-
-        code = error.get("code")
-        subcode = error.get("error_subcode")
 
         raise RuntimeError(
             "Instagram API error: "
-            f"{message} "
-            f"(code={code}, subcode={subcode})"
+            f"{error.get('message', response.text)} "
+            f"(code={error.get('code')}, "
+            f"subcode={error.get('error_subcode')})"
         )
 
-    response.raise_for_status()
+    raise RuntimeError(
+        "Instagram API request failed: "
+        f"HTTP {response.status_code}: "
+        f"{response.text}"
+    )
+
+
+# ============================================================
+# VERIFY TOKEN / ACCOUNT
+# ============================================================
+
+def verify_instagram_connection():
+
+    _validate_config()
+
+    url = (
+        f"{GRAPH_BASE_URL}/"
+        f"{INSTAGRAM_USER_ID}"
+    )
+
+    params = {
+        "fields": "id,username",
+        "access_token": INSTAGRAM_ACCESS_TOKEN,
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        timeout=REQUEST_TIMEOUT,
+    )
+
+    data = _handle_response(response)
+
+    print(
+        "Instagram connection verified: "
+        f"@{data.get('username', 'unknown')}"
+    )
+
+    return data
 
 
 # ============================================================
 # CREATE REEL CONTAINER
 # ============================================================
 
-def create_reel_container(
-    caption,
-):
+def create_reel_container(caption):
 
     _validate_config()
 
@@ -102,18 +158,18 @@ def create_reel_container(
         timeout=REQUEST_TIMEOUT,
     )
 
-    data = _raise_for_instagram_error(response)
+    data = _handle_response(response)
 
     container_id = data.get("id")
 
     if not container_id:
         raise RuntimeError(
-            "Instagram did not return a "
-            "Reel container ID."
+            "Instagram did not return "
+            "a Reel container ID."
         )
 
     print(
-        f"Instagram Reel container created: "
+        "Instagram Reel container created: "
         f"{container_id}"
     )
 
@@ -121,7 +177,7 @@ def create_reel_container(
 
 
 # ============================================================
-# UPLOAD LOCAL VIDEO
+# UPLOAD LOCAL MP4
 # ============================================================
 
 def upload_video_file(
@@ -129,14 +185,17 @@ def upload_video_file(
     video_file,
 ):
 
-    if not os.path.exists(video_file):
+    if not os.path.isfile(video_file):
+
         raise FileNotFoundError(
-            f"Instagram video not found: {video_file}"
+            f"Instagram video not found: "
+            f"{video_file}"
         )
 
     file_size = os.path.getsize(video_file)
 
     if file_size <= 0:
+
         raise RuntimeError(
             "Instagram video file is empty."
         )
@@ -156,7 +215,7 @@ def upload_video_file(
     }
 
     print(
-        "Uploading video file to Instagram..."
+        "Uploading video to Instagram..."
     )
 
     with open(video_file, "rb") as file_handle:
@@ -165,10 +224,10 @@ def upload_video_file(
             url,
             headers=headers,
             data=file_handle,
-            timeout=300,
+            timeout=UPLOAD_TIMEOUT,
         )
 
-    data = _raise_for_instagram_error(response)
+    data = _handle_response(response)
 
     print(
         "Instagram video upload completed."
@@ -178,12 +237,10 @@ def upload_video_file(
 
 
 # ============================================================
-# CHECK PROCESSING STATUS
+# GET CONTAINER STATUS
 # ============================================================
 
-def get_container_status(
-    container_id,
-):
+def get_container_status(container_id):
 
     url = (
         f"{GRAPH_BASE_URL}/"
@@ -201,30 +258,33 @@ def get_container_status(
         timeout=REQUEST_TIMEOUT,
     )
 
-    return _raise_for_instagram_error(response)
+    return _handle_response(response)
 
 
-def wait_for_processing(
-    container_id,
-):
+# ============================================================
+# WAIT FOR VIDEO PROCESSING
+# ============================================================
+
+def wait_for_processing(container_id):
 
     print(
-        "Waiting for Instagram to process Reel..."
+        "Waiting for Instagram "
+        "to process Reel..."
     )
 
-    started = time.time()
+    start_time = time.time()
 
     while True:
 
-        status_data = get_container_status(
+        data = get_container_status(
             container_id
         )
 
-        status_code = status_data.get(
+        status_code = data.get(
             "status_code"
         )
 
-        status_message = status_data.get(
+        status_message = data.get(
             "status"
         )
 
@@ -236,10 +296,11 @@ def wait_for_processing(
         if status_code == "FINISHED":
 
             print(
-                "Instagram Reel processing finished."
+                "Instagram Reel "
+                "processing finished."
             )
 
-            return status_data
+            return data
 
         if status_code in (
             "ERROR",
@@ -247,33 +308,37 @@ def wait_for_processing(
         ):
 
             raise RuntimeError(
-                "Instagram Reel processing failed: "
+                "Instagram Reel processing "
+                "failed: "
                 f"{status_message or status_code}"
             )
 
-        if (
-            time.time() - started
-            > PROCESSING_TIMEOUT
-        ):
+        elapsed = (
+            time.time() - start_time
+        )
+
+        if elapsed > PROCESSING_TIMEOUT:
 
             raise TimeoutError(
-                "Instagram Reel processing timed out."
+                "Instagram Reel processing "
+                "timed out."
             )
 
-        time.sleep(POLL_INTERVAL)
+        time.sleep(
+            POLL_INTERVAL
+        )
 
 
 # ============================================================
-# PUBLISH
+# PUBLISH REEL
 # ============================================================
 
-def publish_reel(
-    container_id,
-):
+def publish_reel(container_id):
 
     url = (
         f"{GRAPH_BASE_URL}/"
-        f"{INSTAGRAM_USER_ID}/media_publish"
+        f"{INSTAGRAM_USER_ID}/"
+        f"media_publish"
     )
 
     payload = {
@@ -287,25 +352,27 @@ def publish_reel(
         timeout=REQUEST_TIMEOUT,
     )
 
-    data = _raise_for_instagram_error(response)
+    data = _handle_response(response)
 
     media_id = data.get("id")
 
     if not media_id:
+
         raise RuntimeError(
             "Instagram did not return "
-            "a published media ID."
+            "published media ID."
         )
 
     print(
-        f"Instagram Reel published: {media_id}"
+        "Instagram Reel published "
+        f"successfully: {media_id}"
     )
 
     return data
 
 
 # ============================================================
-# COMPLETE UPLOAD FLOW
+# COMPLETE INSTAGRAM REEL FLOW
 # ============================================================
 
 def upload_reel(
@@ -315,19 +382,29 @@ def upload_reel(
 
     _validate_config()
 
+    # First confirm that:
+    # 1. token is valid
+    # 2. token can access IG account
+    # 3. INSTAGRAM_USER_ID is correct
+    verify_instagram_connection()
+
+    # Create resumable Reel container
     container_id = create_reel_container(
         caption=caption,
     )
 
+    # Upload local MP4 directly to Meta
     upload_video_file(
         container_id=container_id,
         video_file=video_file,
     )
 
+    # Wait for Meta processing
     wait_for_processing(
         container_id=container_id,
     )
 
+    # Publish Reel
     return publish_reel(
         container_id=container_id,
     )

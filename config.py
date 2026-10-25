@@ -394,26 +394,29 @@ CONFIG_DIR = "video-performance-history/"
 # ============================================================
 
 INSTAGRAM_USER_ID = os.getenv(
-    "INSTAGRAM_USER_ID"
-)
+    "INSTAGRAM_USER_ID",
+    ""
+).strip()
 
 INSTAGRAM_ACCESS_TOKEN = os.getenv(
-    "INSTAGRAM_ACCESS_TOKEN"
-)
+    "INSTAGRAM_ACCESS_TOKEN",
+    ""
+).strip()
 
 INSTAGRAM_GRAPH_API_VERSION = os.getenv(
-    "INSTAGRAM_GRAPH_API_VERSION"
-)
+    "INSTAGRAM_GRAPH_API_VERSION",
+    "v24.0"
+).strip()
 
 INSTAGRAM_SHARE_TO_FEED = os.getenv(
     "INSTAGRAM_SHARE_TO_FEED",
     "true"
-).lower() == "true"
+).strip().lower() == "true"
 
 INSTAGRAM_UPLOAD_ENABLED = os.getenv(
     "INSTAGRAM_UPLOAD_ENABLED",
     "false"
-).lower() == "true"
+).strip().lower() == "true"
 
 # ============================================================
 # ENSURE OUTPUT DIRECTORIES EXIST
