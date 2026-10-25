@@ -27,6 +27,7 @@ from agents.video_agent import build_video
 from agents.youtube_agent import upload_video, post_first_comment
 from agents.analytics_agent import add_to_performance_history
 from agents.quality_agent import inspect_rendered_video, calculate_pre_upload_quality
+from agents.instagram_agent import upload_reel
 
 from config import (
     OUTPUT_AUDIO,
@@ -36,8 +37,8 @@ from config import (
     PEXELS_API_KEY,
     PIXABAY_API_KEY,
     ensure_output_dirs,
+    INSTAGRAM_UPLOAD_ENABLED
 )
-
 
 def clean_youtube_description(text):
 
@@ -754,6 +755,57 @@ def main():
             f"\nVideo tracked for analytics: {video_id}"
         )
 
+        # ====================================================
+        # INSTAGRAM REELS
+        # ====================================================
+
+        if INSTAGRAM_UPLOAD_ENABLED:
+
+            print(
+                "\nUploading to Instagram Reels..."
+            )
+
+            try:
+
+                instagram_caption = (
+                    build_instagram_caption(
+                        topic=topic,
+                        script=script,
+                        category=category,
+                    )
+                )
+
+                instagram_response = upload_reel(
+                    video_file=OUTPUT_VIDEO,
+                    caption=instagram_caption,
+                )
+
+                instagram_media_id = (
+                    instagram_response.get("id")
+                )
+
+                print(
+                    "Instagram Reel upload completed."
+                )
+
+                print(
+                    "Instagram Media ID: "
+                    f"{instagram_media_id}"
+                )
+
+            except Exception as exc:
+
+                print(
+                    "\nInstagram upload failed "
+                    f"(non-fatal): {exc}"
+                )
+
+        else:
+
+            print(
+                "\nInstagram upload disabled."
+            )
+
     # ========================================================
     # CLEANUP
     # ========================================================
@@ -768,6 +820,48 @@ def main():
     print("=" * 70)
     print(f"\nVideo: {OUTPUT_VIDEO}")
 
+def build_instagram_caption(
+    topic,
+    script,
+    category,
+):
+
+    hashtags = [
+        "#reels",
+        "#facts",
+        "#didyouknow",
+        "#interestingfacts",
+        "#funfacts",
+        "#learnsomethingnew",
+        "#education",
+        "#knowledge",
+        "#explore",
+        "#littleexplorercreative",
+    ]
+
+    if category:
+
+        category_hashtag = (
+            "#"
+            + category
+            .replace("&", "")
+            .replace("-", "")
+            .replace(" ", "")
+        )
+
+        hashtags.append(
+            category_hashtag
+        )
+
+    caption = (
+        f"{topic}\n\n"
+        f"{script.strip()}\n\n"
+        "Follow @littleexplorercreative "
+        "for more amazing facts! 🌍✨\n\n"
+        + " ".join(hashtags)
+    )
+
+    return caption[:2200]
 
 if __name__ == "__main__":
     main()

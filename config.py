@@ -389,6 +389,31 @@ CLIPS_DIR = "output/clips"
 TEMP_DIR = "output/temp"
 CONFIG_DIR = "video-performance-history/"
 
+# ============================================================
+# INSTAGRAM
+# ============================================================
+
+INSTAGRAM_USER_ID = os.getenv(
+    "INSTAGRAM_USER_ID"
+)
+
+INSTAGRAM_ACCESS_TOKEN = os.getenv(
+    "INSTAGRAM_ACCESS_TOKEN"
+)
+
+INSTAGRAM_GRAPH_API_VERSION = os.getenv(
+    "INSTAGRAM_GRAPH_API_VERSION"
+)
+
+INSTAGRAM_SHARE_TO_FEED = os.getenv(
+    "INSTAGRAM_SHARE_TO_FEED",
+    "true"
+).lower() == "true"
+
+INSTAGRAM_UPLOAD_ENABLED = os.getenv(
+    "INSTAGRAM_UPLOAD_ENABLED",
+    "false"
+).lower() == "true"
 
 # ============================================================
 # ENSURE OUTPUT DIRECTORIES EXIST
