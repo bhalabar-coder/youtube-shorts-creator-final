@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Did Hurricanes Form Over Volcanoes?",
-    "category": "weather and natural phenomena"
-  },
-  {
     "topic": "Are Volcanoes Responsible for Earth's Most Unique Glaciers?",
     "category": "volcanoes and earthquakes"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Jupiter’s gravity could crush Earth",
     "category": "planets and moons"
+  },
+  {
+    "topic": "Why do some deserts sparkle like diamonds?",
+    "category": "weird and wonderful facts"
   }
 ]
