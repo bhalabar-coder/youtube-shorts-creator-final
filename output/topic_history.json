@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Are Volcanoes Responsible for Earth's Most Unique Glaciers?",
-    "category": "volcanoes and earthquakes"
-  },
-  {
     "topic": "The highest mountain in the solar system",
     "category": "geography and world records"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Why do some deserts sparkle like diamonds?",
     "category": "weird and wonderful facts"
+  },
+  {
+    "topic": "Myth: Can you walk into a rainbow?",
+    "category": "rainbows"
   }
 ]
