@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Ancient Library of Pergamum's Hidden Book Destruction",
-    "category": "history and ancient civilizations"
-  },
-  {
     "topic": "Did You Know You Have a Second Brain",
     "category": "human body and brain"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "How do seeds explode to plant themselves?",
     "category": "seeds and how plants spread"
+  },
+  {
+    "topic": "How do birds map entire oceans?",
+    "category": "animal intelligence"
   }
 ]
