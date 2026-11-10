@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Did You Know You Have a Second Brain",
-    "category": "human body and brain"
-  },
-  {
     "topic": "Fluorescent Mushrooms That Glow in the Dark",
     "category": "chemistry and cool reactions"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "How do birds map entire oceans?",
     "category": "animal intelligence"
+  },
+  {
+    "topic": "Where does your digital memory go?",
+    "category": "coding and programming basics"
   }
 ]
