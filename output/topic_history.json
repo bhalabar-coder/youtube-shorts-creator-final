@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Fluorescent Mushrooms That Glow in the Dark",
-    "category": "chemistry and cool reactions"
-  },
-  {
     "topic": "Hurricanes Form Around the World's Most Volcanic Islands",
     "category": "hurricanes and typhoons"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Where does your digital memory go?",
     "category": "coding and programming basics"
+  },
+  {
+    "topic": "How do maglev trains fly using magnetism?",
+    "category": "magnets and magnetism"
   }
 ]
