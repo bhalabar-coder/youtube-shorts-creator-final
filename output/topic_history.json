@@ -1,9 +1,5 @@
 [
   {
-    "topic": "The Miraculous Hall of Mirrors in Abandoned Soviet Factories",
-    "category": "optical illusions in nature"
-  },
-  {
     "topic": "Did Ancient Human Ancestors Build the Dzungarian Sinkholes?",
     "category": "caves and underground wonders"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Is K2 more dangerous than Mount Everest?",
     "category": "the world's tallest mountains"
+  },
+  {
+    "topic": "Desert mirages: Why do they look like water?",
+    "category": "optical illusions in nature"
   }
 ]
