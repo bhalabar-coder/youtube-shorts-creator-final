@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Ocelots Are Masters of Disguise and Stealth",
-    "category": "nocturnal animals"
-  },
-  {
     "topic": "The Most Unusual Near-Earth Asteroid Shape",
     "category": "asteroids and near-earth objects"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "What tiny muscle controls our childhood giggles?",
     "category": "human growth and development"
+  },
+  {
+    "topic": "Octopus skin changes color faster than your blink?",
+    "category": "octopuses and squids"
   }
 ]
