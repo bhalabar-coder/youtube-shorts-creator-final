@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Did Frogs Have Built-in Solar Power Systems",
-    "category": "reptiles and amphibians"
-  },
-  {
     "topic": "Ocelots Are Masters of Disguise and Stealth",
     "category": "nocturnal animals"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Saber-toothed cats: Were they faster than modern leopards?",
     "category": "prehistoric mammals"
+  },
+  {
+    "topic": "What tiny muscle controls our childhood giggles?",
+    "category": "human growth and development"
   }
 ]
