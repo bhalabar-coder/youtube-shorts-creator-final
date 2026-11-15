@@ -1,9 +1,5 @@
 [
   {
-    "topic": "The Most Unusual Near-Earth Asteroid Shape",
-    "category": "asteroids and near-earth objects"
-  },
-  {
     "topic": "Why the Northern Hemisphere Has More Summer Days",
     "category": "seasons and why they happen"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Octopus skin changes color faster than your blink?",
     "category": "octopuses and squids"
+  },
+  {
+    "topic": "Pangaea: How big was the missing supercontinent?",
+    "category": "continents and how they formed"
   }
 ]
