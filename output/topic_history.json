@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Do Elephants Have a Secret Language That Humans Can't Understand?",
-    "category": "animal communication"
-  },
-  {
     "topic": "Astronauts' Unseen Spacewalk Hazards",
     "category": "astronauts and life in space"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Plants without sunlight: How do they eat?",
     "category": "how plants make food"
+  },
+  {
+    "topic": "Which flag is designed to look like a weapon?",
+    "category": "world flags and their meanings"
   }
 ]
