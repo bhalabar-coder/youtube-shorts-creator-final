@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Why the Northern Hemisphere Has More Summer Days",
-    "category": "seasons and why they happen"
-  },
-  {
     "topic": "Do Elephants Have a Secret Language That Humans Can't Understand?",
     "category": "animal communication"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Pangaea: How big was the missing supercontinent?",
     "category": "continents and how they formed"
+  },
+  {
+    "topic": "Plants without sunlight: How do they eat?",
+    "category": "how plants make food"
   }
 ]
