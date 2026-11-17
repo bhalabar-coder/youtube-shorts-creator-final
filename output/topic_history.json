@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Astronauts' Unseen Spacewalk Hazards",
-    "category": "astronauts and life in space"
-  },
-  {
     "topic": "Crystal Clusters Hold Secrets",
     "category": "crystals and how they form"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Which flag is designed to look like a weapon?",
     "category": "world flags and their meanings"
+  },
+  {
+    "topic": "Could a raptor's talon rip through concrete?",
+    "category": "birds of prey"
   }
 ]
