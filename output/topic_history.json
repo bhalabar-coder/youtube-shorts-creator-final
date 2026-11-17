@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Crystal Clusters Hold Secrets",
-    "category": "crystals and how they form"
-  },
-  {
     "topic": "Moldy Cheese's Surprising Anti-Microbial Property",
     "category": "taste and smell science"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Could a raptor's talon rip through concrete?",
     "category": "birds of prey"
+  },
+  {
+    "topic": "Can bones grow back after a major break?",
+    "category": "the skeletal system"
   }
 ]
