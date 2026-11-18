@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Tiny Feathered Theropod Dinosaurs Were More Intelligent",
-    "category": "paleontology and dinosaur digs"
-  },
-  {
     "topic": "The World's Most Disrupted Time Zones",
     "category": "time zones"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Are spider webs stronger than steel?",
     "category": "spiders and arachnids"
+  },
+  {
+    "topic": "Is the mantis shrimp faster than a bullet?",
+    "category": "the fastest animals on earth"
   }
 ]
