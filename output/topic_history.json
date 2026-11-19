@@ -1,9 +1,5 @@
 [
   {
-    "topic": "The World's Most Disrupted Time Zones",
-    "category": "time zones"
-  },
-  {
     "topic": "Hidden Dangers of Opal Mining Secrets",
     "category": "gemstones and minerals"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Is the mantis shrimp faster than a bullet?",
     "category": "the fastest animals on earth"
+  },
+  {
+    "topic": "Can your brain create false memories?",
+    "category": "how memory works"
   }
 ]
