@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Seed dispersal by birds of paradise",
-    "category": "seeds and how plants spread"
-  },
-  {
     "topic": "How Fast Can a Human Run to Beat the Cheetah?",
     "category": "the world's fastest sports"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Wind turbines are bigger than skyscrapers?",
     "category": "renewable energy"
+  },
+  {
+    "topic": "Desert fog: How does a dune get wet?",
+    "category": "deserts of the world"
   }
 ]
