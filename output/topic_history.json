@@ -1,9 +1,5 @@
 [
   {
-    "topic": "How Fast Can a Human Run to Beat the Cheetah?",
-    "category": "the world's fastest sports"
-  },
-  {
     "topic": "Why Did the Kraken's Legendary Shipwrecks Remain Unsolved?",
     "category": "legendary creatures"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Desert fog: How does a dune get wet?",
     "category": "deserts of the world"
+  },
+  {
+    "topic": "What lives in the ocean’s deepest trenches?",
+    "category": "ocean and marine life"
   }
 ]
