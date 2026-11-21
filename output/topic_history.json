@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Why Did the Kraken's Legendary Shipwrecks Remain Unsolved?",
-    "category": "legendary creatures"
-  },
-  {
     "topic": "How Fast Do Moons Orbit Their Host Planets",
     "category": "planets and moons"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "What lives in the ocean’s deepest trenches?",
     "category": "ocean and marine life"
+  },
+  {
+    "topic": "Can two rainbows appear at once?",
+    "category": "rainbows"
   }
 ]
