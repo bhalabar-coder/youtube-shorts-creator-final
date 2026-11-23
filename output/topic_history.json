@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Jellyfish Bioluminescence: Can They Communicate?",
-    "category": "jellyfish and bioluminescence"
-  },
-  {
     "topic": "The Great Magnet Mystery: Why Magnets Attract Certain Objects",
     "category": "magnets and magnetism"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Why is summer sunshine stronger than winter?",
     "category": "seasons and why they happen"
+  },
+  {
+    "topic": "Northern Lights move faster than you blink",
+    "category": "the northern lights"
   }
 ]
