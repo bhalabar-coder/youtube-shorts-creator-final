@@ -1,9 +1,5 @@
 [
   {
-    "topic": "The Great Magnet Mystery: Why Magnets Attract Certain Objects",
-    "category": "magnets and magnetism"
-  },
-  {
     "topic": "Nocturnal Animals Can See in Ultra Violet Light",
     "category": "nocturnal animals"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Northern Lights move faster than you blink",
     "category": "the northern lights"
+  },
+  {
+    "topic": "Stomach acid dissolves metal",
+    "category": "strange but true science facts"
   }
 ]
