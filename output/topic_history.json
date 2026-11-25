@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Did Ancient Astronauts Build the Pyramids with Gravity Tricks?",
-    "category": "gravity"
-  },
-  {
     "topic": "Snow Forms in Giant Ice Crystals",
     "category": "snow and how it forms"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Sees a rabbit or a duck? Brain trick",
     "category": "optical illusions"
+  },
+  {
+    "topic": "Are small asteroids just as dangerous as huge ones?",
+    "category": "asteroids and near-earth objects"
   }
 ]
