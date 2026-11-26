@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Food Waste: Why We're Wasting 40% of Our Food?",
-    "category": "the digestive system"
-  },
-  {
     "topic": "Tongva People's Ancient Volcano Warning System",
     "category": "famous volcanic eruptions in history"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "Black hole vs. neutron star: Which crushes more?",
     "category": "black holes and neutron stars"
+  },
+  {
+    "topic": "How did sailors map totally unknown seas?",
+    "category": "the history of maps"
   }
 ]
