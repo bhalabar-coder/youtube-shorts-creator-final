@@ -1,9 +1,5 @@
 [
   {
-    "topic": "Cats Can Run Like Cheetahs - No, They Can't",
-    "category": "how athletes train"
-  },
-  {
     "topic": "First Direct Image of Alien Star System",
     "category": "exoplanets and the search for alien life"
   },
@@ -798,5 +794,9 @@
   {
     "topic": "One bolt's energy rivals hundreds of explosions",
     "category": "lightning and thunder"
+  },
+  {
+    "topic": "What makes diamond harder than steel?",
+    "category": "the periodic table"
   }
 ]
